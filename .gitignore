@@ -129,3 +129,6 @@ dmypy.json
 .pyre/
 
 img_align_celeba
+
+#VSCode
+.vscode
