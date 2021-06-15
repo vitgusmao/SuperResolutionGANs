@@ -1,13 +1,12 @@
 import glob
-import time
-import os
-from imageio import imread, imwrite
-from skimage.transform import resize as imresize
 
 import numpy as np
 import tensorflow as tf
+
+from imageio import imread, imwrite
+from skimage.transform import resize as imresize
+
 from keras import Input
-# from keras.applications import VGG19
 from keras.callbacks import TensorBoard
 from keras.layers import BatchNormalization, Activation, LeakyReLU, Add, Dense, PReLU, Flatten
 from keras.layers.convolutional import Conv2D, UpSampling2D
@@ -21,7 +20,9 @@ common_optimizer = Adam(0.0002, 0.5)
 # Define hyperparameters
 data_dir = "img_align_celeba/*.*"
 epochs = 200
-batch_size = 1
+BATCH_SIZE = 1
+# Set the dimensions of the noise
+z_dim = 100
 
 # Shape of low-resolution and high-resolution images
 low_resolution_shape = (64, 64, 3)
@@ -169,35 +170,6 @@ def build_discriminator():
     return model
 
 
-discriminator = build_discriminator()
-generator = build_generator()
-
-# vgg = build_vgg()
-vgg = tf.keras.applications.VGG19(
-    include_top=False,
-    weights="imagenet",
-    input_tensor=None,
-    input_shape=high_resolution_shape,
-    pooling=None,
-    classes=1000,
-    classifier_activation="softmax",
-)
-vgg.trainable = False
-vgg.compile(loss='mse', optimizer=common_optimizer, metrics=['accuracy'])
-
-input_low_resolution = Input(shape=(64, 64, 3))
-
-fake_hr_images = generator(input_low_resolution)
-
-fake_features = vgg(fake_hr_images)
-
-discriminator.trainable = False
-
-output = discriminator(fake_hr_images)
-
-model = Model(inputs=[input_low_resolution], outputs=[output, fake_features])
-
-
 def build_adversarial_model(generator, discriminator, vgg):
 
     input_low_resolution = Input(shape=(64, 64, 3))
@@ -219,9 +191,24 @@ def build_adversarial_model(generator, discriminator, vgg):
     return model
 
 
+vgg = tf.keras.applications.VGG19(
+    include_top=False,
+    weights="imagenet",
+    input_tensor=None,
+    input_shape=high_resolution_shape,
+    pooling=None,
+    classes=1000,
+    classifier_activation="softmax",
+)
+vgg.trainable = False
+vgg.compile(loss='mse', optimizer=common_optimizer, metrics=['accuracy'])
+
+discriminator = build_discriminator()
 discriminator.compile(loss='mse',
                       optimizer=common_optimizer,
                       metrics=['accuracy'])
+
+generator = build_generator()
 
 input_high_resolution = Input(shape=high_resolution_shape)
 input_low_resolution = Input(shape=low_resolution_shape)
@@ -240,9 +227,10 @@ adversarial_model.compile(loss=['binary_crossentropy', 'mse'],
                           loss_weights=[1e-3, 1],
                           optimizer=common_optimizer)
 
-tensorboard = TensorBoard(log_dir="logs/".format(time.time()))
-tensorboard.set_model(generator)
-tensorboard.set_model(discriminator)
+# For use of TensorBoard
+# tensorboard = TensorBoard(log_dir="logs/".format(time.time()))
+# tensorboard.set_model(generator)
+# tensorboard.set_model(discriminator)
 
 
 def sample_images(data_dir, batch_size, high_resolution_shape,
@@ -276,20 +264,33 @@ def sample_images(data_dir, batch_size, high_resolution_shape,
     return np.array(high_resolution_images), np.array(low_resolution_images)
 
 
+generated_samples = []
 for epoch in range(epochs):
     print("Epoch:{}".format(epoch))
 
     high_resolution_images, low_resolution_images = sample_images(
         data_dir=data_dir,
-        batch_size=batch_size,
+        batch_size=BATCH_SIZE,
         low_resolution_shape=low_resolution_shape,
         high_resolution_shape=high_resolution_shape)
 
     high_resolution_images = high_resolution_images / 127.5 - 1.
     low_resolution_images = low_resolution_images / 127.5 - 1.
 
-    # for image in range(len(high_resolution_images)):
-    #     img = np.fliplr(high_resolution_images[image])
+    # Generate the images from the noise
+    generated_images = generator.predict(low_resolution_images)
+    generated_samples.append(generated_images)
 
-    #     img.astype(imageio.core.util.Array)
-    #     imwrite('imgs/{}.png'.format(image), img)
+    X = np.concatenate((high_resolution_images, generated_images))
+    # Create labels
+    y = np.zeros(2 * BATCH_SIZE)
+    y[:BATCH_SIZE] = 0.9  # One-sided label smoothing
+
+    # Train discriminator on generated images
+    discriminator.trainable = True
+    d_loss = discriminator.train_on_batch(X, y)
+
+    # Train generator
+    y2 = np.ones(BATCH_SIZE)
+    discriminator.trainable = False
+    g_loss = adversarial_model.train_on_batch(low_resolution_images, y2)
