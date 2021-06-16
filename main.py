@@ -8,7 +8,7 @@ from skimage.transform import resize as imresize
 
 from keras import Input
 from keras.callbacks import TensorBoard
-from keras.layers import BatchNormalization, Activation, LeakyReLU, Add, Dense, PReLU, Flatten
+from keras.layers import BatchNormalization, Activation, LeakyReLU, Add, Dense, PReLU, Flatten, Reshape
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.models import Model
 from keras.optimizers import Adam
@@ -18,8 +18,8 @@ from keras_preprocessing.image import img_to_array, load_img
 common_optimizer = Adam(0.0002, 0.5)
 
 # Define hyperparameters
-data_dir = "img_align_celeba/*.*"
-epochs = 200
+data_dir = "datasets/img_align_celeba/*.*"
+epochs = 10
 BATCH_SIZE = 1
 # Set the dimensions of the noise
 z_dim = 100
@@ -105,6 +105,7 @@ def build_generator():
 
     # Keras model
     model = Model(inputs=[input_layer], outputs=[output], name='generator')
+    print(model.summary())
     return model
 
 
@@ -122,6 +123,7 @@ def build_discriminator():
     # Add the first convolution block
     dis1 = Conv2D(filters=64, kernel_size=3, strides=1,
                   padding='same')(input_layer)
+    # (256, 256, 3) -> ()
     dis1 = LeakyReLU(alpha=leakyrelu_alpha)(dis1)
 
     # Add the 2nd convolution block
@@ -164,28 +166,30 @@ def build_discriminator():
     dis9 = LeakyReLU(alpha=0.2)(dis9)
 
     # Last dense layer - for classification
+    dis9 = Flatten()(dis9)
     output = Dense(units=1, activation='sigmoid')(dis9)
+    # output = Reshape((2,1))(output)
 
     model = Model(inputs=[input_layer], outputs=[output], name='discriminator')
+    print(model.summary())
     return model
 
 
-def build_adversarial_model(generator, discriminator, vgg):
+def build_adversarial_model(generator, discriminator, input_low, vgg):
 
-    input_low_resolution = Input(shape=(64, 64, 3))
-
-    fake_hr_images = generator(input_low_resolution)
+    fake_hr_images = generator(input_low)
     fake_features = vgg(fake_hr_images)
 
     discriminator.trainable = False
 
     output = discriminator(fake_hr_images)
 
-    model = Model(inputs=[input_low_resolution],
-                  outputs=[output, fake_features])
+    model = Model(inputs=[input_low],
+                  outputs=[output, fake_features],
+                  name='adversarial')
 
-    for layer in model.layers:
-        print(layer.name, layer.trainable)
+    # for layer in model.layers:
+    #     print(layer.name, layer.trainable)
 
     print(model.summary())
     return model
@@ -210,19 +214,11 @@ discriminator.compile(loss='mse',
 
 generator = build_generator()
 
-input_high_resolution = Input(shape=high_resolution_shape)
+# input_high_resolution = Input(shape=high_resolution_shape)
 input_low_resolution = Input(shape=low_resolution_shape)
 
-generated_high_resolution_images = generator(input_low_resolution)
-
-features = vgg(generated_high_resolution_images)
-
-discriminator.trainable = False
-
-probs = discriminator(generated_high_resolution_images)
-
-adversarial_model = Model([input_low_resolution, input_high_resolution],
-                          [probs, features])
+adversarial_model = build_adversarial_model(generator, discriminator,
+                                            input_low_resolution, vgg)
 adversarial_model.compile(loss=['binary_crossentropy', 'mse'],
                           loss_weights=[1e-3, 1],
                           optimizer=common_optimizer)
@@ -294,3 +290,10 @@ for epoch in range(epochs):
     y2 = np.ones(BATCH_SIZE)
     discriminator.trainable = False
     g_loss = adversarial_model.train_on_batch(low_resolution_images, y2)
+
+
+_, low_resolution_images = sample_images(
+        data_dir=data_dir,
+        batch_size=1,
+        low_resolution_shape=low_resolution_shape,
+        high_resolution_shape=high_resolution_shape)
