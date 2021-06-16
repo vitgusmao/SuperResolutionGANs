@@ -5,3 +5,4 @@ scikit-image==0.18.1
 scipy==1.6.3
 tensorboard==2.5.0
 tensorflow==2.5.0
+pycuda<2021.1

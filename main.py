@@ -1,4 +1,5 @@
 import glob
+from os import name
 
 import numpy as np
 import tensorflow as tf
@@ -8,21 +9,26 @@ from skimage.transform import resize as imresize
 
 from keras import Input
 from keras.callbacks import TensorBoard
-from keras.layers import BatchNormalization, Activation, LeakyReLU, Add, Dense, PReLU, Flatten, Reshape
+from keras.layers import BatchNormalization, Activation, LeakyReLU, Add, Dense, Flatten
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.models import Model
 from keras.optimizers import Adam
 from keras_preprocessing.image import img_to_array, load_img
+
+from .metrics.time import timeit_context
+
+# Tratamento do uso de memória da gpu
+gpu_devices = tf.config.experimental.list_physical_devices('GPU')
+for device in gpu_devices:
+    tf.config.experimental.set_memory_growth(device, True)
 
 # Common optimizer for all networks
 common_optimizer = Adam(0.0002, 0.5)
 
 # Define hyperparameters
 data_dir = "datasets/img_align_celeba/*.*"
-epochs = 10
-BATCH_SIZE = 1
-# Set the dimensions of the noise
-z_dim = 100
+epochs = 300
+BATCH_SIZE = 10
 
 # Shape of low-resolution and high-resolution images
 low_resolution_shape = (64, 64, 3)
@@ -104,7 +110,7 @@ def build_generator():
     output = Activation('tanh')(gen6)
 
     # Keras model
-    model = Model(inputs=[input_layer], outputs=[output], name='generator')
+    model = Model(inputs=[input_layer], outputs=[output], name='Generator')
     print(model.summary())
     return model
 
@@ -170,7 +176,22 @@ def build_discriminator():
     output = Dense(units=1, activation='sigmoid')(dis9)
     # output = Reshape((2,1))(output)
 
-    model = Model(inputs=[input_layer], outputs=[output], name='discriminator')
+    model = Model(inputs=[input_layer], outputs=[output], name='Discriminator')
+    print(model.summary())
+    return model
+
+
+def build_vgg():
+    model = tf.keras.applications.VGG19(
+        include_top=False,
+        weights="imagenet",
+        input_shape=high_resolution_shape,
+        pooling="avg",
+    )
+
+    # model = Model(inputs=base_model.input, outputs=[output], name='VGG19')
+
+    model.trainable = False
     print(model.summary())
     return model
 
@@ -186,7 +207,7 @@ def build_adversarial_model(generator, discriminator, input_low, vgg):
 
     model = Model(inputs=[input_low],
                   outputs=[output, fake_features],
-                  name='adversarial')
+                  name='Adversarial')
 
     # for layer in model.layers:
     #     print(layer.name, layer.trainable)
@@ -195,16 +216,7 @@ def build_adversarial_model(generator, discriminator, input_low, vgg):
     return model
 
 
-vgg = tf.keras.applications.VGG19(
-    include_top=False,
-    weights="imagenet",
-    input_tensor=None,
-    input_shape=high_resolution_shape,
-    pooling=None,
-    classes=1000,
-    classifier_activation="softmax",
-)
-vgg.trainable = False
+vgg = build_vgg()
 vgg.compile(loss='mse', optimizer=common_optimizer, metrics=['accuracy'])
 
 discriminator = build_discriminator()
@@ -259,41 +271,50 @@ def sample_images(data_dir, batch_size, high_resolution_shape,
 
     return np.array(high_resolution_images), np.array(low_resolution_images)
 
+with timeit_context('Treino'):
+    with tf.device('/gpu:0') as GPU:
+        generated_samples = []
+        for epoch in range(epochs):
+            print("Epoch:{}".format(epoch))
 
-generated_samples = []
-for epoch in range(epochs):
-    print("Epoch:{}".format(epoch))
+            high_resolution_images, low_resolution_images = sample_images(
+                data_dir=data_dir,
+                batch_size=BATCH_SIZE,
+                low_resolution_shape=low_resolution_shape,
+                high_resolution_shape=high_resolution_shape)
 
-    high_resolution_images, low_resolution_images = sample_images(
-        data_dir=data_dir,
-        batch_size=BATCH_SIZE,
-        low_resolution_shape=low_resolution_shape,
-        high_resolution_shape=high_resolution_shape)
+            high_resolution_images = high_resolution_images / 127.5 - 1.
+            low_resolution_images = low_resolution_images / 127.5 - 1.
 
-    high_resolution_images = high_resolution_images / 127.5 - 1.
-    low_resolution_images = low_resolution_images / 127.5 - 1.
+            # Generate the images from the noise
+            generated_images = generator.predict(low_resolution_images)
+            generated_samples.append(generated_images)
 
-    # Generate the images from the noise
-    generated_images = generator.predict(low_resolution_images)
-    generated_samples.append(generated_images)
+            X = np.concatenate((high_resolution_images, generated_images))
+            # Create labels
+            y = np.zeros(2 * BATCH_SIZE)
+            y[:BATCH_SIZE] = 0.9  # One-sided label smoothing
 
-    X = np.concatenate((high_resolution_images, generated_images))
-    # Create labels
-    y = np.zeros(2 * BATCH_SIZE)
-    y[:BATCH_SIZE] = 0.9  # One-sided label smoothing
+            # Train discriminator on generated images
+            discriminator.trainable = True
+            d_loss = discriminator.train_on_batch(X, y)
 
-    # Train discriminator on generated images
-    discriminator.trainable = True
-    d_loss = discriminator.train_on_batch(X, y)
+            # Train generator
+            y2 = np.ones(BATCH_SIZE)
+            discriminator.trainable = False
+            g_loss = adversarial_model.train_on_batch(low_resolution_images, y2)
 
-    # Train generator
-    y2 = np.ones(BATCH_SIZE)
-    discriminator.trainable = False
-    g_loss = adversarial_model.train_on_batch(low_resolution_images, y2)
-
-
-_, low_resolution_images = sample_images(
+    high_resolution_image, low_resolution_image = sample_images(
         data_dir=data_dir,
         batch_size=1,
         low_resolution_shape=low_resolution_shape,
         high_resolution_shape=high_resolution_shape)
+
+    generated_image = generator.predict(low_resolution_image)
+
+    generated_image = np.fliplr(generated_image)[0]
+    high_resolution_image = np.fliplr(high_resolution_image[0])
+    imwrite('imgs/{}.jpg'.format('imagem_gerada'),
+            generated_image.astype(np.uint8))
+    imwrite('imgs/{}.jpg'.format('imagem_original'),
+            high_resolution_image.astype(np.uint8))
