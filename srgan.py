@@ -292,12 +292,12 @@ discriminator.trainable = False
 validity = discriminator(fake_hr)
 
 adversarial = Model([img_lr], [fake_hr, validity])
-adversarial.compile(loss=[vgg_loss, 'binary_crossentropy', 'mse'],
-                    loss_weights=[1.0, 1e-3, 1.0],
+adversarial.compile(loss=[vgg_loss, 'binary_crossentropy'],
+                    loss_weights=[1.0, 1e-3],
                     optimizer=optimizer)
 # Remover mse em testes futuros
 
-epochs = 12750
+epochs = 1000
 batch_size = 1
 sample_interval = 50
 
