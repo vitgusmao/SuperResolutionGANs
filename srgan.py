@@ -40,7 +40,7 @@ hr_shape = (hr_height, hr_width, channels)
 # Number of residual blocks in the generator
 n_residual_blocks = 16
 
-optimizer = Adam(0.0002, 0.5)
+optimizer = Adam(lr=1E-4, beta_1=0.9, beta_2=0.999, epsilon=1e-08)
 
 # Calculate output shape of D (PatchGAN)
 patch = int(hr_height / 2**4)
@@ -125,7 +125,7 @@ def normalize(input_data):
 
 
 def denormalize(input_data):
-    input_data = (input_data * 127.5) + 127.5
+    input_data = (input_data + 1) * 127.5
     return input_data.astype(np.uint8)
 
 
