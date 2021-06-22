@@ -5,9 +5,9 @@ import tensorflow as tf
 from keras import Input
 from keras.models import Model
 
-from ESRGAN.discriminator import build_discriminator
-from ESRGAN.metrics import psnr_metric
-from ESRGAN.rrdbnet import build_rrdbnet
+from gans.esrgan.discriminator import build_discriminator
+from gans.esrgan.metrics import psnr_metric
+from gans.esrgan.rrdbnet import build_rrdbnet
 from data_manager import DataManager
 from losses import gan_loss, l1_loss, build_perceptual_vgg
 from measures.time_measure import time_context
@@ -29,7 +29,7 @@ dataset_dir = '../datasets/{}/'
 data_manager = DataManager(dataset_dir, dataset_name, hr_shape, lr_shape)
 data_manager.initialize_dirs(2)
 
-optimizer = get_adam_optimizer(learning_rate=2e-4,
+optimizer = get_adam_optimizer(lr=2e-4,
                                beta_1=0.5,
                                epsilon=1e-08,
                                moving_avarage=True)

@@ -2,9 +2,10 @@ import numpy as np
 import plotly.graph_objects as go
 
 
-def plot_togheter(informations, using):
+def plot_togheter(informations, using=None):
 
     data = []
+    using = using if using else informations.keys()
 
     for information in using:
         info = informations[information]

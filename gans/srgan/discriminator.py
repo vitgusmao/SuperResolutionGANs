@@ -39,11 +39,11 @@ discriminator_filters = 64
 
 #     return Model(dis_input, validity)
 
-def build_discriminator():
+def build_discriminator(input_shape):
     lrelu_alpha = 0.2
     lrelu = LeakyReLU(alpha=lrelu_alpha)
 
-    disc_input = Input((256, 256, 3))
+    disc_input = Input(input_shape)
 
     block = 0
     x = Conv2D(filters=64,
@@ -151,7 +151,6 @@ def build_discriminator():
 
     x = Dense(100, name='dense_0')(x)
     x = LeakyReLU(alpha=lrelu_alpha, name='leaky_re_lu_final')(x)
-    x = Flatten()(x)
     x = Dense(1, name='dense_1', activation='sigmoid')(x)
 
     model = Model(inputs=disc_input, outputs=x, name='Discriminator')
