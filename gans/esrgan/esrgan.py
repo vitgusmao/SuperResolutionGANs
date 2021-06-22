@@ -71,25 +71,20 @@ def build_esrgan_net():
 
     adversarial.compile(loss=gan_loss, optimizer=optimizer)
 
-    def train_esrgan(epochs=100,
-                     batch_size=1,
-                     sample_interval=50,
-                     initial_values=[1],
-                     complement_value=[0]):
+    def train_esrgan(
+        epochs=100,
+        batch_size=1,
+        sample_interval=50,
+    ):
         informations = {
             'd_loss': [],
             'g_loss': [],
             'd_fake_loss': [],
             'd_real_loss': [],
-            'valid_g': [],
         }
 
-        step_value = [0 for i in range(len(initial_values))]
-        divided = int(epochs / len(initial_values))
-        init_discriminator = 10
-
         with time_context('treino total'):
-            with tf.device('/gpu:0') as GPU:
+            with tf.device('/gpu:0'):
                 for epoch in range(epochs):
                     #  Train Discriminator
                     discriminator_net.trainable = True
@@ -117,45 +112,24 @@ def build_esrgan_net():
                     informations['d_loss'].append(d_loss)
 
                     #  Train Generator
-                    if epoch > init_discriminator:
-                        discriminator_net.trainable = False
+                    discriminator_net.trainable = False
 
-                        # Sample images and their conditioning counterparts
-                        _, lr_imgs = data_manager.load_prepared_data(
-                            batch_size=batch_size)
+                    # Sample images and their conditioning counterparts
+                    _, lr_imgs = data_manager.load_prepared_data(
+                        batch_size=batch_size)
 
-                        # fake_imgs = generator_net(lr_imgs, training=False).numpy()
-                        # mse = tf.keras.losses.mean_squared_error(
-                        #     hr_imgs, fake_imgs)
-                        # valid = abs(np.sin((epochs + 1)))
-                        # valid = np.array([valid])
+                    valid = np.ones((batch_size, ))
 
-                        valid_index = int(epoch / divided)
-                        step_value[valid_index] += complement_value[
-                            valid_index] / divided
+                    print('Epoch: ', epoch)
 
-                        valid = np.zeros(
-                            (batch_size,
-                             )) + initial_values[valid_index] + step_value[
-                                 valid_index] - np.random.random_sample(
-                                     batch_size) * 0.15
-
-                        informations['valid_g'].append(valid[0])
-
-                        print('Epoch: ', epoch)
-                        print('ValidIndex: ', valid_index)
-                        print('StepValue: ', step_value[valid_index])
-                        print('Valid: ', valid)
-                        print()
-
-                        # Train the generators
-                        g_loss = adversarial.train_on_batch(lr_imgs, valid)
-                        informations['g_loss'].append(g_loss)
+                    # Train the generators
+                    g_loss = adversarial.train_on_batch(lr_imgs, valid)
+                    informations['g_loss'].append(g_loss)
 
                     # If at save interval => save generated image samples
                     if epoch % sample_interval == 0:
                         data_manager.sample_images(generator_net, epoch, 2)
 
-            return informations
+        return informations
 
     return train_esrgan

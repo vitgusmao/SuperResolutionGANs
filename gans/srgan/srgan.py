@@ -81,7 +81,8 @@ def build_srgan_net():
             'g_loss': [],
             'd_fake_loss': [],
             'd_real_loss': [],
-            'valid_g': [],
+            'g_loss1': [],
+            'g_loss2': [],
         }
         with time_context('treino total'):
             with tf.device('/gpu:0') as GPU:
@@ -107,7 +108,7 @@ def build_srgan_net():
                     d_loss = 0.5 * np.add(d_loss_real[0], d_loss_fake[0])
                     informations['d_real_loss'].append(d_loss_real[0])
                     informations['d_fake_loss'].append(d_loss_fake[0])
-                    informations['d_loss'].append(d_loss[0])
+                    informations['d_loss'].append(d_loss)
 
                     # ------------------
                     #  Train Generator
@@ -126,7 +127,8 @@ def build_srgan_net():
                     # Train the generators
                     g_loss = adversarial.train_on_batch(
                         imgs_lr, [imgs_hr, vgg_y])
-                    informations['g_loss'].append(g_loss)
+                    informations['g_loss1'].append(g_loss[0])
+                    informations['g_loss2'].append(g_loss[1])
 
                     # If at save interval => save generated image samples
                     if epoch % sample_interval == 0:
