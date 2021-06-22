@@ -6,3 +6,5 @@ scipy==1.6.3
 tensorboard==2.5.0
 tensorflow==2.5.0
 pycuda<2021.1
+pydicom==2.1.2
+tensorflow_addons
