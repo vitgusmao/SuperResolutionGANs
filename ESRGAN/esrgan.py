@@ -1,19 +1,17 @@
-from numpy.core.defchararray import array
-from utils import normalize
 import ipdb
-from ESRGAN.metrics import psnr_metric
-from ESRGAN.losses import gan_loss, l1_loss, perceptual_loss
-from ESRGAN.data_manager import DataManager
-from measures.time_measure import time_context
-from ESRGAN.discriminator import build_discriminator
-from ESRGAN.rrdbnet import build_rrdbnet
 import numpy as np
+import tensorflow as tf
 
 from keras import Input
 from keras.models import Model
-import tensorflow_addons as tfa
-import tensorflow as tf
-from keras.optimizers import Adam
+
+from ESRGAN.discriminator import build_discriminator
+from ESRGAN.losses import gan_loss, l1_loss, perceptual_loss
+from ESRGAN.metrics import psnr_metric
+from ESRGAN.rrdbnet import build_rrdbnet
+from data_manager import DataManager
+from measures.time_measure import time_context
+from optimizers import get_adam_optimizer
 
 # Input shapes
 channels = 3
@@ -33,15 +31,10 @@ dataset_name = 'img_align_celeba'
 dataset_dir = '../datasets/{}/'
 data_manager = DataManager(dataset_dir, dataset_name, hr_shape, lr_shape)
 
-optimizer = Adam(
-    learning_rate=2e-4,
-    beta_1=0.5,
-    # beta_2=0.999,
-    # amsgrad=True,
-    epsilon=1e-08)
-
-# opt = tf.keras.optimizers.RMSprop(learning_rate=0.02, momentum=0.9, epsilon=0.1)
-optimizer = tfa.optimizers.MovingAverage(optimizer)
+optimizer = get_adam_optimizer(learning_rate=2e-4,
+                               beta_1=0.5,
+                               epsilon=1e-08,
+                               moving_avarage=True)
 
 data_manager.initialize_dirs(2)
 
@@ -80,7 +73,11 @@ def build_esrgan_net(test_gan=None):
 
     adversarial.compile(loss=gan_loss, optimizer=optimizer)
 
-    def train_esrgan(epochs=100, batch_size=1, sample_interval=50):
+    def train_esrgan(epochs=100,
+                     batch_size=1,
+                     sample_interval=50,
+                     initial_values=[1],
+                     complement_value=[0]):
         informations = {
             'd_loss': [],
             'g_loss': [],
@@ -89,10 +86,9 @@ def build_esrgan_net(test_gan=None):
             'valid_g': [],
         }
 
-        initial_values = [0.9, 0.7]
-        complement_value = [-0.2, 0.3]
-        step_value = [0, 0]
+        step_value = [0 for i in range(len(initial_values))]
         divided = int(epochs / len(initial_values))
+        init_discriminator = 10
 
         with time_context('treino total'):
             with tf.device('/gpu:0') as GPU:
@@ -123,36 +119,40 @@ def build_esrgan_net(test_gan=None):
                     informations['d_loss'].append(d_loss)
 
                     #  Train Generator
-                    discriminator_net.trainable = False
+                    if epoch > init_discriminator:
+                        discriminator_net.trainable = False
 
-                    # Sample images and their conditioning counterparts
-                    _, lr_imgs = data_manager.load_prepared_data(
-                        batch_size=batch_size)
+                        # Sample images and their conditioning counterparts
+                        _, lr_imgs = data_manager.load_prepared_data(
+                            batch_size=batch_size)
 
-                    # fake_imgs = generator_net(lr_imgs, training=False).numpy()
-                    # mse = tf.keras.losses.mean_squared_error(
-                    #     hr_imgs, fake_imgs)
-                    # valid = abs(np.sin((epochs + 1)))
-                    # valid = np.array([valid])
+                        # fake_imgs = generator_net(lr_imgs, training=False).numpy()
+                        # mse = tf.keras.losses.mean_squared_error(
+                        #     hr_imgs, fake_imgs)
+                        # valid = abs(np.sin((epochs + 1)))
+                        # valid = np.array([valid])
 
-                    valid_index = int(epoch / divided)
-                    step_value[
-                        valid_index] += complement_value[valid_index] / divided
+                        valid_index = int(epoch / divided)
+                        step_value[valid_index] += complement_value[
+                            valid_index] / divided
 
-                    valid = np.zeros(
-                        (batch_size, )
-                    ) + initial_values[valid_index] + step_value[valid_index]
-                    informations['valid_g'].append(valid[0])
+                        valid = np.zeros(
+                            (batch_size,
+                             )) + initial_values[valid_index] + step_value[
+                                 valid_index] - np.random.random_sample(
+                                     batch_size) * 0.15
 
-                    print('Epoch: ', epoch)
-                    print('ValidIndex: ', valid_index)
-                    print('StepValue: ', step_value[valid_index])
-                    print('Valid: ', valid)
-                    print()
+                        informations['valid_g'].append(valid[0])
 
-                    # Train the generators
-                    g_loss = adversarial.train_on_batch(lr_imgs, valid)
-                    informations['g_loss'].append(g_loss)
+                        print('Epoch: ', epoch)
+                        print('ValidIndex: ', valid_index)
+                        print('StepValue: ', step_value[valid_index])
+                        print('Valid: ', valid)
+                        print()
+
+                        # Train the generators
+                        g_loss = adversarial.train_on_batch(lr_imgs, valid)
+                        informations['g_loss'].append(g_loss)
 
                     # If at save interval => save generated image samples
                     if epoch % sample_interval == 0:
