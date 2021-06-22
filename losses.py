@@ -1,7 +1,5 @@
-from ESRGAN.vgg_net import build_vgg
+from vgg_net import build_vgg
 from tensorflow.keras import losses
-
-vgg = build_vgg((256, 256, 3))
 
 
 def l1_loss(y_true, y_pred):
@@ -19,22 +17,27 @@ def l1_loss(y_true, y_pred):
     return loss(y_true, y_pred)
 
 
-def perceptual_loss(y_true, y_pred):
-    """ O loss perceptível é baseado no loss l1 feito sobre as features extraidas do modelo
-        de identificação de imagem vgg19 pré treinado sobre a base imagenet
-    Args:
-        y_true (tf.Tensor): Ground-truth tensor with shape (batch_size, height, width, channels).
-        y_pred (tf.Tensor): Input tensor with shape (batch_size, height, width, channels).
+def build_perceptual_vgg(input_shape):
+    vgg = build_vgg(input_shape)
 
-    Returns:
-        tf.Tensor: Forward results.
-    """
+    def perceptual_loss(y_true, y_pred):
+        """ O loss perceptível é baseado no loss l1 feito sobre as features extraidas do modelo
+            de identificação de imagem vgg19 pré treinado sobre a base imagenet
+        Args:
+            y_true (tf.Tensor): Ground-truth tensor with shape (batch_size, height, width, channels).
+            y_pred (tf.Tensor): Input tensor with shape (batch_size, height, width, channels).
 
-    # Exatrai as features pelo vgg19
-    y_pred_features = vgg(y_pred)
-    y_true_features = vgg(y_true)
+        Returns:
+            tf.Tensor: Forward results.
+        """
 
-    return l1_loss(y_pred_features, y_true_features)
+        # Exatrai as features pelo vgg19
+        y_pred_features = vgg(y_pred)
+        y_true_features = vgg(y_true)
+
+        return l1_loss(y_pred_features, y_true_features)
+
+    return perceptual_loss
 
 
 def _gram_mat(x):

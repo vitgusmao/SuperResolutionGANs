@@ -15,11 +15,12 @@ def build_vgg(net_input, full_net=False):
         x = Conv2D(3, 3, padding='same', name='conv_custom')(x)
         outputs = x
 
-    
+        model = Model([vgg19.input], outputs, name='VGG19CustomTL')
 
-    model = Model([vgg19.input], outputs, name='VGG19CustomTL')
+    else:
+        model = vgg19
+
     model.summary()
-
     # Make trainable as False
     model.trainable = False
 
