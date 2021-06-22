@@ -62,7 +62,12 @@ class DataManager:
         images = self.load_data(batch_size=batch_size, is_testing=is_testing)
         return self.prepare_data(images)
 
-    def sample_images(self, generator_net=None, epoch=None, batch_size=1):
+    def sample_images(self,
+                      generator_net=None,
+                      epoch=None,
+                      batch_size=1,
+                      hr_images=None,
+                      fake_images=None):
         os.makedirs('imgs/%s' % self.dataset_name, exist_ok=True)
 
         if generator_net:
@@ -74,13 +79,23 @@ class DataManager:
             # if np.amin(hr_fakes) < -1:
             #     ipdb.set_trace()
 
-            hr_fakes = denormalize(hr_fakes)
+            hr_fakes = denormalize(hr_fakes, min_value=-1)
 
             for index, hr_gen in zip(range(len(hr_fakes)), hr_fakes):
                 imwrite(
                     'imgs/{}/{}/{}_{}.jpg'.format(self.dataset_name, index,
                                                   epoch, 'generated'),
                     hr_gen.astype(np.uint8))
+
+        elif hr_images is not None and fake_images is not None:
+            for hr_img, (index, hr_gen) in zip(
+                    hr_images, zip(range(len(fake_images)), fake_images)):
+                imwrite(
+                    'imgs/{}/{}/{}.jpg'.format(self.dataset_name, index,
+                                               'test_gen_hr'), hr_gen)
+                imwrite(
+                    'imgs/{}/{}/{}.jpg'.format(self.dataset_name, index,
+                                               'test_hr'), hr_img)
 
     def initialize_dirs(self, testing_batch_size):
 
