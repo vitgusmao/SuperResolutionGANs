@@ -32,7 +32,6 @@ dataset_name = 'img_align_celeba'
 dataset_dir = '../datasets/{}/'
 
 data_manager = DataManager(dataset_dir, dataset_name, hr_shape, lr_shape)
-data_manager.initialize_dirs(2)
 
 vgg = build_vgg(hr_shape, full_net=True)
 
@@ -76,6 +75,7 @@ def build_srgan_net():
         batch_size=1,
         sample_interval=50,
     ):
+        data_manager.initialize_dirs(2, epochs)
         informations = {
             'd_loss': [],
             'g_loss': [],
@@ -117,9 +117,6 @@ def build_srgan_net():
                         batch_size)
 
                     discriminator.trainable = False
-
-                    real_y = np.ones(
-                        batch_size) - np.random.random_sample(batch_size) * 0.1
 
                     # Extract ground truth image features using pre-trained VGG19 model
                     vgg_y = vgg.predict(imgs_hr)

@@ -9,16 +9,15 @@ import sys
 
 sys.path.append('./')
 
-# from gans.esrgan.esrgan import build_esrgan_net as build_gan
-from gans.srgan.srgan import build_srgan_net as build_gan
+from gans.esrgan.esrgan import build_esrgan_net as build_gan
+# from gans.srgan.srgan import build_srgan_net as build_gan
 
 gan = build_gan()
 
 information = gan(
-    epochs=2500,
+    epochs=200,
     batch_size=1,
-    sample_interval=10,
+    sample_interval=20,
 )
 
 plot_togheter(information)
-# from gans.cyclegan import cyclegan

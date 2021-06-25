@@ -10,3 +10,4 @@ pydicom==2.1.2
 tensorflow_addons
 tensorflow_datasets
 plotly
+Pillow

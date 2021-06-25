@@ -76,10 +76,13 @@ class DataManager:
 
             hr_fakes = generator_net.predict(lr_imgs)
 
-            # if np.amin(hr_fakes) < -1:
-            #     ipdb.set_trace()
-
             hr_fakes = denormalize(hr_fakes, min_value=-1)
+
+            if not self.epochs:
+                raise Exception('missing epochs')
+
+            epoch = str(epoch)
+            epoch = epoch.zfill(len(str(self.epochs)))
 
             for index, hr_gen in zip(range(len(hr_fakes)), hr_fakes):
                 imwrite(
@@ -90,6 +93,7 @@ class DataManager:
         elif hr_images is not None and fake_images is not None:
             for hr_img, (index, hr_gen) in zip(
                     hr_images, zip(range(len(fake_images)), fake_images)):
+
                 imwrite(
                     'imgs/{}/{}/{}.jpg'.format(self.dataset_name, index,
                                                'test_gen_hr'), hr_gen)
@@ -97,8 +101,8 @@ class DataManager:
                     'imgs/{}/{}/{}.jpg'.format(self.dataset_name, index,
                                                'test_hr'), hr_img)
 
-    def initialize_dirs(self, testing_batch_size):
-
+    def initialize_dirs(self, testing_batch_size, total_epochs):
+        self.epochs = total_epochs
         hr_imgs, lr_imgs = self.load_prepared_data(
             batch_size=testing_batch_size, is_testing=True)
 

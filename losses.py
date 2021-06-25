@@ -1,5 +1,6 @@
 from vgg_net import build_vgg
 from tensorflow.keras import losses
+from keras import backend as K
 
 
 def l1_loss(y_true, y_pred):
@@ -100,3 +101,10 @@ def gan_loss(y_true, y_pred):
     """
     # from_logits=True
     return losses.binary_crossentropy(y_true, y_pred)
+
+
+def build_vgg_loss(vgg):
+    def vgg_loss(y_true, y_pred):
+        return K.mean(K.square(vgg(y_true) - vgg(y_pred)))
+
+    return vgg_loss

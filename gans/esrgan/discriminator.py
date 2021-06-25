@@ -117,7 +117,6 @@ def build_discriminator():
 
     x = Dense(100, name='dense_0')(x)
     x = LeakyReLU(alpha=lrelu_alpha, name='leaky_re_lu_final')(x)
-    x = Flatten()(x)
     x = Dense(1, name='dense_1', activation='sigmoid')(x)
 
     model = Model(inputs=disc_input, outputs=x, name='Discriminator')
