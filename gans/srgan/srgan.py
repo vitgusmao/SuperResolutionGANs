@@ -6,7 +6,7 @@ from keras import backend as K
 from keras import Input
 from keras.models import Model
 
-from data_manager import DataManager
+from data_manager import ImagesManager
 from measures.time_measure import time_context
 from optimizers import get_adam_optimizer
 from gans.srgan.discriminator import build_discriminator
@@ -31,7 +31,7 @@ optimizer = get_adam_optimizer(lr=1e-4, amsgrad=True, epsilon=1e-08)
 dataset_name = 'img_align_celeba'
 dataset_dir = '../datasets/{}/'
 
-data_manager = DataManager(dataset_dir, dataset_name, hr_shape, lr_shape)
+data_manager = ImagesManager(dataset_dir, dataset_name, hr_shape, lr_shape)
 
 vgg = build_vgg(hr_shape, full_net=True)
 
@@ -129,7 +129,7 @@ def build_srgan_net():
 
                     # If at save interval => save generated image samples
                     if epoch % sample_interval == 0:
-                        data_manager.sample_images(generator, epoch, 2)
+                        data_manager.sample_per_epoch(generator, epoch, 2)
 
         return informations
 

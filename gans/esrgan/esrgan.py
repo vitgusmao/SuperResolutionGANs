@@ -5,8 +5,9 @@ import tensorflow as tf
 
 from keras import Input
 from keras.models import Model
+from tensorflow import keras
 
-from data_manager import DataManager
+from data_manager import ImagesManager
 from gans.esrgan.discriminator import build_discriminator
 from gans.esrgan.metrics import psnr_metric
 from gans.esrgan.rrdbnet import build_rrdbnet
@@ -20,10 +21,12 @@ channels = 3
 
 lr_height = 64
 lr_width = 64
+lr_img_shape = (lr_height, lr_width)
 lr_shape = (lr_height, lr_width, channels)
 
 hr_height = lr_height * 4
 hr_width = lr_width * 4
+hr_img_shape = (hr_height, hr_width)
 hr_shape = (hr_height, hr_width, channels)
 
 dis_patch = (8, 8, 1)
@@ -31,7 +34,8 @@ dis_patch = (8, 8, 1)
 dataset_name = 'img_align_celeba'
 dataset_dir = '../datasets/{}/'
 models_path = 'models/esrgan/{}'
-data_manager = DataManager(dataset_dir, dataset_name, hr_shape, lr_shape)
+data_manager = ImagesManager(dataset_dir, dataset_name, hr_img_shape,
+                             lr_img_shape)
 
 
 def build_esrgan_net():
@@ -46,7 +50,7 @@ def build_esrgan_net():
     vgg_loss = build_vgg_loss(vgg)
 
     # Define a rede geradora
-    if os.path.isfile(models_path.format('generator_net')):
+    if os.path.isdir(models_path.format('generator_net')):
         generator_net = tf.keras.models.load_model(
             models_path.format('generator_net'))
     else:
@@ -59,16 +63,17 @@ def build_esrgan_net():
             metrics=psnr_metric)
 
     # Define a rede discriminadora
-    if os.path.isfile(models_path.format('discriminator_net')):
+    discriminator_net = build_discriminator()
+    if os.path.isdir(models_path.format('discriminator_net')):
+
         discriminator_net = tf.keras.models.load_model(
             models_path.format('discriminator_net'))
     else:
-        discriminator_net = build_discriminator()
         discriminator_net.compile(loss=['binary_crossentropy'],
                                   optimizer=optimizer,
                                   metrics='accuracy')
 
-    if os.path.isfile(models_path.format('adversarial_net')):
+    if os.path.isdir(models_path.format('adversarial_net')):
         adversarial = tf.keras.models.load_model(
             models_path.format('adversarial_net'))
     else:
@@ -108,8 +113,7 @@ def build_esrgan_net():
                     discriminator_net.trainable = True
 
                     # Sample images and their conditioning counterparts
-                    hr_imgs, lr_imgs = data_manager.load_prepared_data(
-                        batch_size=batch_size)
+                    hr_imgs, lr_imgs = data_manager.load_images(batch_size)
 
                     # From low res. image generate high res. version
                     pred_hr = generator_net.predict(lr_imgs)
@@ -133,8 +137,7 @@ def build_esrgan_net():
                     discriminator_net.trainable = False
 
                     # Sample images and their conditioning counterparts
-                    hr_imgs, lr_imgs = data_manager.load_prepared_data(
-                        batch_size=batch_size)
+                    hr_imgs, lr_imgs = data_manager.load_images(batch_size)
 
                     vgg_y = vgg.predict(hr_imgs)
 
@@ -144,21 +147,25 @@ def build_esrgan_net():
                     informations['g_loss'].append(g_loss[0])
 
                     if epoch > 0:
-                        if informations['d_loss'][
-                                epoch - 1] >= informations['d_loss'][epoch]:
-                            discriminator_net.save(
-                                models_path.format('discriminator_net'))
 
-                        if informations['g_loss'][
-                                epoch - 1] >= informations['g_loss'][epoch]:
-                            adversarial.save(
-                                models_path.format('adversarial_net'))
-                            generator_net.save(
-                                models_path.format('generator_net'))
+                        save_model(discriminator_net, 'discriminator_net',
+                                   informations['d_loss'], epoch)
+                        save_model(generator_net, 'generator_net',
+                                   informations['g_loss'], epoch)
+                        save_model(adversarial, 'adversarial_net',
+                                   informations['g_loss'], epoch)
 
                     if epoch % sample_interval == 0:
-                        data_manager.sample_images(generator_net, epoch, 2)
+                        data_manager.sample_per_epoch(generator_net, epoch, 2)
 
         return informations
 
     return train_esrgan
+
+
+def save_model(net, net_name, losses, epoch):
+    if np.amin(losses[:epoch]) >= losses[epoch]:
+        print('\n--\nSaving {net_name}\n--\n')
+        net.save(models_path.format(net_name),
+                 overwrite=True,
+                 save_traces=False)
