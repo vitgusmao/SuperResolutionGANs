@@ -1,66 +1,37 @@
+import ipdb
 import numpy as np
 import tensorflow as tf
 
-def reorder_image(img, input_order='HWC'):
-    """Reorder images to 'HWC' order.
+# Tentativa de salvar o modelo completo da rede
+# class PSNR(tf.keras.metrics.Metric):
+#     def __init__(self, name='peak_signal_to_noise_ratio', **kwargs):
+#         super(PSNR, self).__init__(name=name, **kwargs)
+#         self.psnr = self.add_weight(name='psnr', initializer='glorot_normal')
 
-    If the input_order is (h, w), return (h, w, 1);
-    If the input_order is (c, h, w), return (h, w, c);
-    If the input_order is (h, w, c), return as it is.
+#     def update_state(self, y_true, y_pred, sample_weight=None):
+#         ipdb.set_trace()
+#         value = tf.image.psnr(y_true, y_pred, max_val=255)
 
-    Args:
-        img (ndarray): Input image.
-        input_order (str): Whether the input order is 'HWC' or 'CHW'.
-            If the input image shape is (h, w), input_order will not have
-            effects. Default: 'HWC'.
+#         if sample_weight is not None:
+#             sample_weight = tf.cast(sample_weight, self.dtype)
+#             value = tf.multiply(value, sample_weight)
 
-    Returns:
-        ndarray: reordered image.
-    """
+#         self.psnr.assign_add(value)
 
-    if input_order not in ['HWC', 'CHW']:
-        raise ValueError(
-            f'Wrong input_order {input_order}. Supported input_orders are '
-            "'HWC' and 'CHW'")
-    if len(img.shape) == 2:
-        img = img[..., None]
-    if input_order == 'CHW':
-        img = img.transpose(1, 2, 0)
-    return img
+#     def result(self):
+#         return self.psnr
 
+#     def reset_states(self):
+#         self.psnr.assign(0)
 
-def to_y_channel(img):
-    """Change to Y channel of YCbCr.
-
-    Args:
-        img (ndarray): Images with range [0, 255].
-
-    Returns:
-        (ndarray): Images with range [0, 255] (float type) without round.
-    """
-    img = img.astype(np.float32) / 255.
-    if img.ndim == 3 and img.shape[2] == 3:
-        img = bgr2ycbcr(img, y_only=True)
-        img = img[..., None]
-    return img * 255.
+#     def get_config(self):
+#         config = super(PSNR, self).get_config()
+#         config.update({"psnr": float(self.psnr)})
+#         return config
 
 
 def psnr_metric(y_true, y_pred):
-    # img1 = img1.astype(np.float64)
-    # img2 = img2.astype(np.float64)
-
-    # if test_y_channel:
-    #     img1 = to_y_channel(img1)
-    #     img2 = to_y_channel(img2)
-
-    # mse = np.mean((img1 - img2)**2)
-    # if mse == 0:
-    #     return float('inf')
-    # return 20. * np.log10(255. / np.sqrt(mse))
     tf.image.psnr(y_pred, y_true, max_val=255)
-
-    
-
 
 # def _ssim(img1, img2):
 #     """Calculate SSIM (structural similarity) for one channel images.

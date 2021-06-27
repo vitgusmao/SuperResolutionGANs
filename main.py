@@ -15,7 +15,7 @@ from gans.esrgan.esrgan import build_esrgan_net as build_gan
 gan = build_gan()
 
 information = gan(
-    epochs=200,
+    epochs=2000,
     batch_size=1,
     sample_interval=20,
 )

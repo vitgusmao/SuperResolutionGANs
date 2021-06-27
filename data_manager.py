@@ -26,7 +26,7 @@ def denormalize(input_data, scale_map=(0, 1)):
     Returns:
         np.array: Imagem desnormalizada com pixels de [0 - 255] no formato uint8
     """
-    max_value, min_value = scale_map
+    min_value, max_value = scale_map
     new_max = 255
     new_min = 0
     scale = max_value - min_value
@@ -109,19 +109,22 @@ class ImagesManager:
         # pil_image = tf.image.random_flip_left_right(pil_image)
 
         # Faz um ajuste randômico no brilho da imagem
-        bright_enhancer = ImageEnhance.Brightness(pil_image)
-        factor = 0.5
-        pil_image = bright_enhancer.enhance(factor)
+        if np.random.random(1) >= 0.5:
+            bright_enhancer = ImageEnhance.Brightness(pil_image)
+            factor = 0.5
+            pil_image = bright_enhancer.enhance(factor)
 
         # Faz um ajuste randômico no contraste da imagem
-        contrast_enhancer = ImageEnhance.Contrast(pil_image)
-        factor = 4.0
-        pil_image = contrast_enhancer.enhance(factor)
+        if np.random.random(1) >= 0.5:
+            contrast_enhancer = ImageEnhance.Contrast(pil_image)
+            factor = 4.0
+            pil_image = contrast_enhancer.enhance(factor)
 
-        # # Faz um ajuste randômico na saturação da imagem
-        # sat_enhancer = ImageEnhance.Color(pil_image)
-        # factor = 1.5
-        # pil_image = sat_enhancer.enhance(factor)
+        # Faz um ajuste randômico na saturação da imagem
+        if np.random.random(1) >= 0.8:
+            sat_enhancer = ImageEnhance.Color(pil_image)
+            factor = 1.5
+            pil_image = sat_enhancer.enhance(factor)
 
         # Transforma a imagem em formato numpy.array
         output_image = np.array(pil_image).astype(np.float32)
@@ -179,7 +182,7 @@ class ImagesManager:
     def _unprocess_image(self, image, scale_map):
         image = np.array(image)
         image = denormalize(image, scale_map)
-        image.astype(np.uint8)
+        image = image.astype(np.uint8)
         pil_image = Image.fromarray(image, "RGB")
 
         return pil_image

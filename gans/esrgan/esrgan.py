@@ -43,55 +43,46 @@ def build_esrgan_net():
     optimizer = get_adam_optimizer(lr=2e-4,
                                    beta_1=0.5,
                                    epsilon=1e-08,
-                                   moving_avarage=True)
+                                   moving_avarage=False)
 
     vgg = build_vgg(hr_shape, full_net=True)
 
     vgg_loss = build_vgg_loss(vgg)
 
     # Define a rede geradora
-    if os.path.isdir(models_path.format('generator_net')):
-        generator_net = tf.keras.models.load_model(
-            models_path.format('generator_net'))
-    else:
-        #     os.makedirs(models_path.format('generator_net'), exist_ok=True)
-        generator_net = build_rrdbnet()
-        generator_net.compile(
-            loss=['mse', 'mae'],
-            #   loss_weights=[0.3, 0.7],
-            optimizer=optimizer,
-            metrics=psnr_metric)
+    generator_net = build_rrdbnet()
+    generator_net.compile(loss=['mse', 'mae'],
+                          loss_weights=[0.2, 0.8],
+                          optimizer=optimizer,
+                          metrics=psnr_metric)
+
+    generator_net.load_weights(models_path.format('generator_net'))
 
     # Define a rede discriminadora
     discriminator_net = build_discriminator()
-    if os.path.isdir(models_path.format('discriminator_net')):
+    discriminator_net.compile(loss=['binary_crossentropy'],
+                              optimizer=optimizer,
+                              metrics='accuracy')
 
-        discriminator_net = tf.keras.models.load_model(
-            models_path.format('discriminator_net'))
-    else:
-        discriminator_net.compile(loss=['binary_crossentropy'],
-                                  optimizer=optimizer,
-                                  metrics='accuracy')
+    discriminator_net.load_weights(models_path.format('discriminator_net'))
 
-    if os.path.isdir(models_path.format('adversarial_net')):
-        adversarial = tf.keras.models.load_model(
-            models_path.format('adversarial_net'))
-    else:
-        # For the adversarial model we will only train the generator
-        discriminator_net.trainable = False
+    # For the adversarial model we will only train the generator
+    discriminator_net.trainable = False
 
-        img_input = Input(shape=lr_shape)
+    img_input = Input(shape=lr_shape)
 
-        # Generate high res. version from low res.
-        gen_hr = generator_net(img_input)
+    # Generate high res. version from low res.
+    gen_hr = generator_net(img_input)
 
-        # Discriminator determines validity of generated high res. images
-        validity = discriminator_net(gen_hr)
+    # Discriminator determines validity of generated high res. images
+    validity = discriminator_net(gen_hr)
 
-        adversarial = Model([img_input], [gen_hr, validity], name='ESRGAN')
-        adversarial.summary()
+    adversarial = Model([img_input], [gen_hr, validity], name='ESRGAN')
+    adversarial.summary()
 
-        adversarial.compile(loss=[vgg_loss], optimizer=optimizer)
+    adversarial.compile(loss=[vgg_loss], optimizer=optimizer)
+
+    adversarial.load_weights(models_path.format('adversarial_net'))
 
     def train_esrgan(
         epochs=100,
@@ -165,7 +156,8 @@ def build_esrgan_net():
 
 def save_model(net, net_name, losses, epoch):
     if np.amin(losses[:epoch]) >= losses[epoch]:
-        print('\n--\nSaving {net_name}\n--\n')
-        net.save(models_path.format(net_name),
-                 overwrite=True,
-                 save_traces=False)
+        print(f'\n-- saving {net_name} --\n')
+        net.save_weights(
+            models_path.format(net_name),
+            overwrite=True,
+        )
