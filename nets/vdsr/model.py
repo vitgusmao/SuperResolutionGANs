@@ -1,4 +1,5 @@
 import ipdb
+from keras import metrics
 import tensorflow as tf
 from keras.engine.input_layer import Input
 from keras.layers import ReLU, Add
@@ -9,7 +10,7 @@ import numpy as np
 keras = tf.keras
 
 from data_manager import ImagesManager, CNNImageSequence
-
+from metrics import image_metrics
 
 class SamplesCallback(keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -79,8 +80,9 @@ class VDSR(keras.Model):
     def compile(
         self,
         optimizer,
+        metrics
     ):
-        super(VDSR, self).compile(run_eagerly=True)
+        super(VDSR, self).compile(run_eagerly=True, metrics=metrics)
         self.optimizer = optimizer
 
         self.loss_fn = keras.losses.MeanSquaredError()
@@ -108,38 +110,36 @@ class VDSR(keras.Model):
         }
 
 
-def train_and_compile():
-    # Input shapes
-    channels = 3
+def compile_and_train(img_shapes, dataset_info, train_args):
+    hr_img_shape = img_shapes.get('hr_img_shape')
+    lr_img_shape = img_shapes.get('lr_img_shape')
 
-    lr_height = 64
-    lr_width = 64
-    lr_img_shape = (lr_height, lr_width)
-    lr_shape = (lr_height, lr_width, channels)
+    hr_shape = img_shapes.get('hr_shape')
+    lr_shape = img_shapes.get('lr_shape')
 
-    hr_height = lr_height * 4
-    hr_width = lr_width * 4
-    hr_img_shape = (hr_height, hr_width)
-    hr_shape = (hr_height, hr_width, channels)
+    dataset_dir = dataset_info.get('dataset_dir')
+    dataset_name = dataset_info.get('dataset_name')
 
-    dataset_name = 'DIV2K_train_HR'
-    dataset_dir = '../datasets/{}/'
-    image_manager = ImagesManager(dataset_dir, dataset_name, hr_img_shape,
-                                  lr_img_shape)
+    batch_size = train_args.get('batch_size')
+    epochs = train_args.get('epochs')
 
-    image_sequence = CNNImageSequence(dataset_dir, dataset_name, hr_img_shape,
-                                      hr_img_shape, 1)
+    net_name = 'VDSR'
+
+    image_manager = ImagesManager(dataset_dir, dataset_name, net_name,
+                                  hr_img_shape, lr_img_shape)
+
+    image_sequence = CNNImageSequence(image_manager, 1)
 
     # Create enhanced super resolution gan model
     model = VDSR(hr_shape=hr_shape, image_manager=image_manager)
 
     # Compile the model
     model.compile(
-        optimizer=keras.optimizers.SGD(learning_rate=0.1, momentum=0.9))
+        optimizer=keras.optimizers.SGD(learning_rate=0.1, momentum=0.9), metrics=image_metrics)
 
     model.fit(image_sequence,
-              batch_size=1,
-              epochs=1000,
-              use_multiprocessing=True,
-              workers=2,
-              callbacks=[SamplesCallback()])
+                     batch_size=batch_size,
+                     epochs=epochs,
+                    #  use_multiprocessing=True,
+                    #  workers=2,
+                     callbacks=[SamplesCallback()])

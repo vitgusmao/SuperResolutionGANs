@@ -1,6 +1,7 @@
 from vgg_net import build_vgg
 from tensorflow.keras import losses
 from keras import backend as K
+import ipdb
 
 
 def l1_loss(y_true, y_pred):
@@ -14,15 +15,16 @@ def l1_loss(y_true, y_pred):
         tf.Tensor: [description]
     """
     loss = losses.MeanAbsoluteError(
-        reduction=losses.Reduction.SUM_OVER_BATCH_SIZE, name='l1_loss')
+        reduction=losses.Reduction.SUM_OVER_BATCH_SIZE, name="l1_loss"
+    )
     return loss(y_true, y_pred)
 
 
-def build_perceptual_vgg(input_shape):
-    vgg = build_vgg(input_shape, tl_layer='block3_conv4')
+def build_perceptual_vgg(input_shape, tl_layer):
+    vgg = build_vgg(input_shape, tl_layer)
 
     def perceptual_loss(y_true, y_pred):
-        """ O loss perceptível é baseado no loss l1 feito sobre as features extraidas do modelo
+        """O loss perceptível é baseado no loss l1 feito sobre as features extraidas do modelo
             de identificação de imagem vgg19 pré treinado sobre a base imagenet
         Args:
             y_true (tf.Tensor): Ground-truth tensor with shape (batch_size, height, width, channels).
@@ -68,7 +70,7 @@ def style_loss(y_true, y_pred):
         Tensor: Forward results.
     """
     style_weight = 1.0
-    criterion = 'l1'
+    criterion = "l1"
 
     # extract vgg features
     x_features = vgg(x)
@@ -78,8 +80,10 @@ def style_loss(y_true, y_pred):
     if style_weight > 0:
         style_loss = 0
         for k in x_features.keys():
-            style_loss += criterion(_gram_mat(
-                x_features[k]), _gram_mat(gt_features[k])) * layer_weights[k]
+            style_loss += (
+                criterion(_gram_mat(x_features[k]), _gram_mat(gt_features[k]))
+                * layer_weights[k]
+            )
 
         style_loss *= style_weight
 

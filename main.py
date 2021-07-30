@@ -9,15 +9,44 @@ import sys
 
 sys.path.append('./')
 
-from gans.esrgan.esrgan import build_esrgan_net as build_gan
-# from gans.srgan.srgan import build_srgan_net as build_gan
+def run_net(runner):
 
-gan = build_gan()
+    train_args = {'batch_size': 1, 'epochs': 100}
 
-information = gan(
-    epochs=2000,
-    batch_size=1,
-    sample_interval=20,
-)
+    # Input shapes
+    channels = 3
 
-plot_togheter(information)
+    lr_height = 64
+    lr_width = 64
+    lr_img_shape = (lr_height, lr_width)
+    lr_shape = (lr_height, lr_width, channels)
+
+    hr_height = lr_height * 4
+    hr_width = lr_width * 4
+    hr_img_shape = (hr_height, hr_width)
+    hr_shape = (hr_height, hr_width, channels)
+
+    img_shapes = {
+        'hr_shape': hr_shape,
+        'lr_shape': lr_shape,
+        'hr_img_shape': hr_img_shape,
+        'lr_img_shape': lr_img_shape
+    }
+
+    dataset_info = {
+        'dataset_name': 'DIV2K_train_HR',
+        'dataset_dir': '../datasets/{}/',
+    }
+
+    runner(img_shapes, dataset_info, train_args)
+
+
+# from gans.esrgan.evo import train_and_compile
+with tf.device('/GPU:0'):
+    from nets.vdsr.model import compile_and_train
+
+    run_net(compile_and_train)
+
+# some metrics
+# psnr = tf.image.psnr(out, y, max_val=255.0)
+# ssim = tf.image.ssim(out, y, max_val=255.0)

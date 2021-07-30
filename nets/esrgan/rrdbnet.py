@@ -120,130 +120,134 @@ def RRDBNet(net_input,
     return model
 
 
-def build_rrdbnet():
+def build_rrdbnet(input_shape, filters=64):
     """
     Net data format (batch_size, height, width, channels)
     """
+
     lrelu = LeakyReLU(alpha=0.2)
 
-    net_input = Input((64, 64, 3))
+    net_input = Input(input_shape)
 
-    first_conv = Conv2D(filters=64,
+    first_conv = Conv2D(filters=filters,
                         kernel_size=3,
                         kernel_initializer='glorot_normal',
                         strides=1,
                         padding='same',
                         name='first_conv')(net_input)
 
-    x = Conv2D(filters=64,
+    block = 1
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_1'.format(1))(first_conv)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_1')(first_conv)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_2'.format(1))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_2')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_3'.format(1))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_3')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_4'.format(1))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_4')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_5'.format(1))(x)
+               name=f'rd_block_{block}_conv_5')(x)
 
-    x = Conv2D(filters=64,
+    block += 1
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_1'.format(2))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_1')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_2'.format(2))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_2')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_3'.format(2))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_3')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_4'.format(2))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_4')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_5'.format(2))(x)
+               name=f'rd_block_{block}_conv_5')(x)
 
-    x = Conv2D(filters=64,
+    block += 1
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_1'.format(3))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_1')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_2'.format(3))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_2')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_3'.format(3))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_3')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_4'.format(3))(x)
-    x = Conv2D(filters=64,
+               name=f'rd_block_{block}_conv_4')(x)
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
-               name='rd_block_{}_conv_5'.format(3))(x)
+               name=f'rd_block_{block}_conv_5')(x)
 
-    x = Conv2D(filters=64,
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
@@ -255,7 +259,7 @@ def build_rrdbnet():
     # upsample
     x = UpSampling2D(size=2, interpolation="nearest", name='up_sampling_1')(x)
     x = Conv2D(
-        filters=256,
+        filters=filters * 2,
         kernel_size=3,
         kernel_initializer='glorot_normal',
         strides=1,
@@ -265,7 +269,7 @@ def build_rrdbnet():
     )(x)
     x = UpSampling2D(size=2, interpolation="nearest", name='up_sampling_2')(x)
     x = Conv2D(
-        filters=256,
+        filters=filters * 4,
         kernel_size=3,
         kernel_initializer='glorot_normal',
         strides=1,
@@ -274,14 +278,14 @@ def build_rrdbnet():
         name='conv_up_sampling_2',
     )(x)
 
-    x = Conv2D(filters=64,
+    x = Conv2D(filters=filters,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
                padding='same',
                activation=lrelu,
                name='conv_hr')(x)
-    x = Conv2D(filters=3,
+    output = Conv2D(filters=3,
                kernel_size=3,
                kernel_initializer='glorot_normal',
                strides=1,
@@ -289,7 +293,7 @@ def build_rrdbnet():
                activation='tanh',
                name='last_conv')(x)
 
-    model = Model(inputs=net_input, outputs=x, name='RRDBNet')
+    model = Model(inputs=net_input, outputs=output, name='RRDBNet')
     print(model.summary())
 
     return model

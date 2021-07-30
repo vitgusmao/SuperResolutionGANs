@@ -1,16 +1,27 @@
 import imageio
 import glob
+import argparse
 
-dataset_name = 'img_align_celeba'
+parser = argparse.ArgumentParser(description='Options for build the gif')
+parser.add_argument('--input', help='path to images folder')
+parser.add_argument('--output', help='gif output path', default='.')
+parser.add_argument('--name',
+                    type=str,
+                    help='gif name',
+                    default='generated_gif')
 
-for samples in range(2):
-    imgs_dir = 'imgs/{}/{}/'.format(dataset_name, samples)
-    file_names = glob.glob('{}*.*'.format(imgs_dir))
-    file_names.sort()
+args = parser.parse_args()
 
-    images = []
-    with imageio.get_writer('imgs/{}/{}.gif'.format(dataset_name, samples),
-                            mode='I') as writer:
-        for filename in file_names:
-            image = imageio.imread(filename)
-            writer.append_data(image)
+if args.input:
+    imgs_dir = args.input
+else:
+    raise Exception('missing --input arg, see "gif_maker.py -h" for help')
+
+file_names = glob.glob(f'{imgs_dir}*.*')
+file_names.sort()
+
+images = []
+with imageio.get_writer(f'{args.output}/{args.name}.gif', mode='I') as writer:
+    for filename in file_names:
+        image = imageio.imread(filename)
+        writer.append_data(image)
