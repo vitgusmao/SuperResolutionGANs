@@ -20,8 +20,8 @@ def l1_loss(y_true, y_pred):
     return loss(y_true, y_pred)
 
 
-def build_perceptual_vgg(input_shape, tl_layer):
-    vgg = build_vgg(input_shape, tl_layer)
+def build_perceptual_vgg(input_shape, layers):
+    vgg = build_vgg(input_shape, layers)
 
     def perceptual_loss(y_true, y_pred):
         """O loss perceptível é baseado no loss l1 feito sobre as features extraidas do modelo

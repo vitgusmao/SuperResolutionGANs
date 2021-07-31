@@ -2,7 +2,7 @@ from keras.models import Model
 from tensorflow.keras.applications import VGG19
 
 
-def build_vgg(net_input, full_net=False, tl_layer="block1_conv2"):
+def build_vgg(net_input, full_net=False, layers=None):
     # """
     # Builds a pre-trained VGG19 model that outputs image features extracted
     # """
@@ -12,10 +12,12 @@ def build_vgg(net_input, full_net=False, tl_layer="block1_conv2"):
     )
 
     if not full_net:
-        x = vgg19.get_layer(tl_layer).output
-        output = x
+        outputs = []
+        for tl_layer in layers:
+            x = vgg19.get_layer(tl_layer).output
+            outputs.append(x)
 
-        model = Model(vgg19.input, output, name="VGG19CustomTL")
+        model = Model(vgg19.input, outputs, name="VGG19CustomTL")
 
     else:
         model = vgg19

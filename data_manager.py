@@ -3,9 +3,12 @@ import glob
 import ipdb
 import math
 import numpy as np
+from numpy.lib.twodim_base import flipud
 import tensorflow as tf
+import imgaug.augmenters as iaa
+import imgaug
 
-from PIL import Image, ImageEnhance
+from PIL import Image
 
 
 class ImagesManager:
@@ -71,172 +74,125 @@ class ImagesManager:
 
         return input_data
 
-    def load_raw_image(self, image_path):
+    def load_image(self, image_path):
         image = Image.open(image_path)
         image = image.convert("RGB")
+        image = np.array(image).astype(np.float32)
         return image
 
-    def load_raw_images(self, batch_size, path=None, is_test=False):
+    def load_images(self, batch_size, path=None, is_test=False):
         images_batch = []
         for i in range(batch_size):
             if not path:
                 if not is_test:
-                    image_name = self.train_images.pop(i)
+                    # image_name = self.train_images.pop(i)
                     image_name = self.train_images[i]
                 else:
                     image_name = self.test_images[i]
 
-                images_batch.append(self.load_raw_image(image_name))
+                images_batch.append(self.load_image(image_name))
 
             else:
-                images_batch.append(self.load_raw_image(path))
+                images_batch.append(self.load_image(path))
 
         return images_batch
 
-    def upsampling(self, pil_image, shape):
-        """Redimensiona a imagem para as dimensões de alta resolução
+    def resampling(self, image, shape):
+        """Redimensiona a imagem para a resolução desejada
 
         Args:
-            pil_image ([type]): [description]
+            image ([type]): [description]
             shape ([type]): [description]
         """
-        return pil_image.resize(shape, resample=Image.BICUBIC)
+        seq = iaa.Sequential([iaa.Resize(shape[0], interpolation="cubic")])
 
-    def downsampling(self, pil_image, shape):
-        """Redimensiona a imagem para as dimensões de baixa resolução
-            utilizando a técnica Lanczos que é um filtro de alta qualidade
-            para downsampling de imagens
+        return seq(image=image)
 
-        Args:
-            pil_image ([type]): [description]
-            shape ([type]): [description]
-        """
-        return pil_image.resize(shape, resample=Image.LANCZOS)
+    def augment(self, images):
+        if isinstance(images, list):
+            images = np.array(images).astype(np.uint8)
 
-    def train_augmentation(self, image):
-        interpolation_methods = [
-            "bilinear",
-            "nearest",
-            "bicubic",
-            "gaussian",
-            "mitchellcubic",
-        ]
+        org_img_size = images.shape[1]
 
-        # if np.random.uniform() < 0.5:
-        #     image = tf.image.random_flip_left_right(image)
-        # if np.random.uniform() < 0.5:
-        #     image = tf.image.random_flip_up_down(image)
-        # if np.random.uniform() < 0.8:
-        #     image = tf.image.random_brightness(image, max_delta=2.0)
-        # if np.random.uniform() < 0.9:
-        #     image = tf.image.random_saturation(image, lower=0.5, upper=5.0)
-        # if np.random.uniform() < 0.6:
-        #     original_size = image.shape[0]
-        #     crop_size = np.random.randint(int(image.shape[0] * (3 / 4)), image.shape[0])
-        #     image = tf.image.random_crop(image, size=(crop_size, crop_size, 3))
-        #     image = tf.image.resize(
-        #         image,
-        #         size=(original_size, original_size),
-        #         method=np.random.choice(interpolation_methods),
-        #     )
-        # if np.random.uniform() < 0.9:
-        #     original_size = image.shape[0]
-        #     scale_factor = np.random.choice([0.33, 0.5, 1, 2, 3])
-        #     image = tf.image.resize(
-        #         image,
-        #         size=(
-        #             int(original_size * scale_factor),
-        #             int(original_size * scale_factor),
-        #         ),
-        #     )
-        #     image = tf.image.resize(
-        #         image,
-        #         size=(original_size, original_size),
-        #         method=np.random.choice(interpolation_methods),
-        #     )
+        seq = iaa.Sequential(
+            [
+                iaa.Crop(px=(0, int(org_img_size / 4)), keep_size=True),
+                iaa.Fliplr(0.5),
+                iaa.Flipud(0.5),
+                iaa.GaussianBlur(sigma=(0, 3.0)),
+                iaa.MultiplyBrightness((0.7, 1.3)),
+                iaa.KeepSizeByResize(
+                    iaa.Resize(np.random.uniform(0.75, 1.75), interpolation=imgaug.ALL)
+                ),
+                iaa.MultiplyHueAndSaturation(1.5),
+            ]
+        )
 
-        return image
+        images = seq(images=images)
 
-    def train_preprocess(self, pil_image):
+        return images
 
-        # Transforma a imagem em formato numpy.array
-        image = np.array(pil_image).astype(np.float32)
+    def load_test_images(self):
+        pass
 
-        image = self.train_augmentation(image)
+    def get_images(self, batch_size, path=None, is_test=False):
+        images = self.load_images(batch_size, path, is_test)
 
-        # Faz a normalização da escala [0-255] para [0-1]
-        image = self.normalize(image)
+        lr_images = []
+        hr_images = []
 
-        return image
+        if not is_test:
+            images = self.augment(images)
 
-    def test_preprocess(self, pil_image):
+        for image in images:
 
-        # Transforma a imagem em formato numpy.array do tipo np.float32
-        output_image = np.array(pil_image).astype(np.float32)
+            lr_img = self.resampling(image, self.lr_shape)
+            hr_img = self.resampling(image, self.hr_shape)
 
-        # Faz a normalização da escala [0-255] para [0-1]
-        output_image = self.normalize(output_image)
+            # Faz a normalização da escala [0-255] para [0-1]
+            lr_img = self.normalize(lr_img)
+            hr_img = self.normalize(hr_img)
 
-        return output_image
+            lr_images.append(lr_img)
+            hr_images.append(hr_img)
 
-    def load_images(self, batch_size, path=None, is_test=False):
+        # Transforma o array em tf.float32, o tipo de float que o tensorflow utiliza durante os cálculos
+        lr_images = tf.cast(lr_images, dtype=tf.float32)
+        hr_images = tf.cast(hr_images, dtype=tf.float32)
+
+        return hr_images, lr_images
+
+    def get_images_cnn(self, batch_size, path=None, is_test=False):
         images = self.load_raw_images(batch_size, path, is_test)
 
         lr_images = []
         hr_images = []
+
+        if not is_test:
+            images = self.augment(images)
+
         for image in images:
-            # Pré-processamento das imagens
-            hr_img = self.upsampling(image, self.hr_shape)
-            lr_img = self.downsampling(image, self.lr_shape)
 
-            if not is_test:
-                hr_img = self.train_preprocess(hr_img)
-                lr_img = self.train_preprocess(lr_img)
+            lr_img = self.resampling(image, self.lr_shape)
+            lr_img = self.resampling(lr_img, self.hr_shape)
+            hr_img = self.resampling(image, self.hr_shape)
 
-            else:
-                hr_img = self.test_preprocess(hr_img)
-                lr_img = self.test_preprocess(lr_img)
+            # Faz a normalização da escala [0-255] para [0-1]
+            lr_img = self.normalize(lr_img)
+            hr_img = self.normalize(hr_img)
 
-            hr_images.append(hr_img)
             lr_images.append(lr_img)
+            hr_images.append(hr_img)
 
         # Transforma o array em tf.float32, o tipo de float que o tensorflow utiliza durante os cálculos
-        hr_images = tf.cast(hr_images, dtype=tf.float32)
         lr_images = tf.cast(lr_images, dtype=tf.float32)
+        hr_images = tf.cast(hr_images, dtype=tf.float32)
 
         return hr_images, lr_images
 
-    def load_images_cnn(self, batch_size, path=None, is_test=False):
-        images = self.load_raw_images(batch_size, path, is_test)
-
-        lr_images = []
-        hr_images = []
-        for image in images:
-            # Pré-processamento das imagens
-            hr_img = self.upsampling(image, self.hr_shape)
-            lr_img = self.downsampling(image, self.lr_shape)
-            lr_img = self.upsampling(lr_img, self.hr_shape)
-
-            if not is_test:
-                hr_img = self.train_preprocess(hr_img)
-                lr_img = self.train_preprocess(lr_img)
-
-            else:
-                hr_img = self.test_preprocess(hr_img)
-                lr_img = self.test_preprocess(lr_img)
-
-            hr_images.append(hr_img)
-            lr_images.append(lr_img)
-
-        # Transforma o array em tf.float32, o tipo de float que o tensorflow utiliza durante os cálculos
-        hr_images = tf.cast(hr_images, dtype=tf.float32)
-        lr_images = tf.cast(lr_images, dtype=tf.float32)
-
-        return hr_images, lr_images
-
-    def unprocess_image(self, image, scale_map, generated):
+    def unprocess_image(self, image, generated=False):
         image = np.array(image)
-        image = self.denormalize(image, scale_map)
+        image = np.clip(image, 0, 255)
 
         # Se for uma imagem gerada, fazer uma correção de gamma
         # if generated:
@@ -248,18 +204,16 @@ class ImagesManager:
         return pil_image
 
     def rebuild_images(self, images, generated=False, scale_map=None):
-        output_images = []
         if not scale_map:
             if generated:
                 scale_map = (-1, 1)
             else:
                 scale_map = (0, 1)
 
-        output_images = [
-            self.unprocess_image(image, scale_map, generated) for image in images
-        ]
+        images = [self.denormalize(image, scale_map) for image in images]
+        images = [self.unprocess_image(image, generated) for image in images]
 
-        return output_images
+        return images
 
     def sample_per_epoch(
         self,
@@ -269,7 +223,7 @@ class ImagesManager:
     ):
         images_names = f"{self.output_loc}test_"
 
-        _, lr_imgs = self.load_images(batch_size, is_test=True)
+        _, lr_imgs = self.get_images(batch_size, is_test=True)
 
         hr_fakes = generator_net(lr_imgs, training=False)
 
@@ -293,7 +247,7 @@ class ImagesManager:
     ):
         images_names = f"{self.output_loc}test_"
 
-        _, lr_imgs = self.load_images_cnn(batch_size, is_test=True)
+        _, lr_imgs = self.get_images_cnn(batch_size, is_test=True)
 
         hr_fakes = generator_net(lr_imgs, training=False)
 
@@ -317,7 +271,7 @@ class ImagesManager:
         gen_path = image_path + f"test_gen.{img_format}"
         low_path = image_path + f"low_resolution.{img_format}"
 
-        _, lr_img = self.load_images(1, original_path, True)
+        _, lr_img = self.get_images(1, original_path, True)
 
         hr_gen = generator_net.predict(lr_img)
         hr_gen = self.rebuild_images(hr_gen, True)[0]
@@ -327,35 +281,39 @@ class ImagesManager:
         hr_gen.save(gen_path)
         lr_img.save(low_path)
 
-    def initialize_dirs(self, testing_batch_size, total_epochs):
+    def initialize_dirs(self, testing_batch_size, total_epochs, originals=True):
         os.makedirs(f"{self.output_loc}", exist_ok=True)
 
         self.epochs = total_epochs
-        imgs = self.load_raw_images(testing_batch_size, is_test=True)
+        imgs = self.load_images(testing_batch_size, is_test=True)
         images_dir = f"{self.output_loc}test_"
 
         for idx, img in enumerate(imgs):
             sample_dir = images_dir + f"{idx}/"
             os.makedirs(sample_dir, exist_ok=True)
-            hr_path = sample_dir + "?0_high_resolution.jpg"
-            lr_path = sample_dir + "?0_low_resolution.jpg"
 
-            hr_img = self.upsampling(img, self.hr_shape)
-            lr_img = self.downsampling(img, self.lr_shape)
+            if originals:
+                hr_path = sample_dir + "high_resolution.jpg"
+                lr_path = sample_dir + "low_resolution.jpg"
 
-            hr_img.save(hr_path)
-            lr_img.save(lr_path)
+                hr_img = self.resampling(img, self.hr_shape)
+                hr_img = self.unprocess_image(hr_img)
+                hr_img.save(hr_path)
+
+                lr_img = self.resampling(img, self.lr_shape)
+                lr_img = self.unprocess_image(lr_img)
+                lr_img.save(lr_path)
 
 
 class ImageSequence(tf.keras.utils.Sequence):
     def __init__(self, image_manager, batch_size):
         self.data_manager = image_manager
 
-        self.x, self.y = self.data_manager.images_names, self.data_manager.images_names
+        self.images = self.data_manager.images_names
         self.batch_size = batch_size
 
     def __len__(self):
-        return math.ceil(len(self.x) / (len(self.x) / self.batch_size))
+        return math.ceil(len(self.images) / (len(self.images) / self.batch_size))
 
     def __getitem__(self, idx):
         batch_x = self._get_x_batch(idx)
@@ -363,39 +321,29 @@ class ImageSequence(tf.keras.utils.Sequence):
 
         return np.array(batch_x), np.array(batch_y)
 
+    def _get_image_batch(self, idx):
+        imgs = self.images[idx * self.batch_size : (idx + 1) * self.batch_size]
+        imgs = [self.data_manager.load_image(img) for img in imgs]
+        imgs = self.data_manager.augment(imgs)
+        return imgs
+
     def _get_x_batch(self, idx):
-        x = self.x[idx * self.batch_size : (idx + 1) * self.batch_size]
-        x = [self.data_manager.load_raw_image(img) for img in x]
-        x = [
-            self.data_manager.downsampling(img, self.data_manager.lr_shape)
-            for img in x
-        ]
-        x = [self.data_manager.train_preprocess(img) for img in x]
+        x = self._get_image_batch(idx)
+        x = [self.data_manager.resampling(img, self.data_manager.lr_shape) for img in x]
         x = tf.cast(x, dtype=tf.float32)
         return x
 
     def _get_y_batch(self, idx):
-        y = self.y[idx * self.batch_size : (idx + 1) * self.batch_size]
-        y = [self.data_manager.load_raw_image(img) for img in y]
-        y = [
-            self.data_manager.upsampling(img, self.data_manager.hr_shape) for img in y
-        ]
-        y = [self.data_manager.train_preprocess(img) for img in y]
+        y = self._get_image_batch(idx)
+        y = [self.data_manager.resampling(img, self.data_manager.hr_shape) for img in y]
         y = tf.cast(y, dtype=tf.float32)
         return y
 
 
 class CNNImageSequence(ImageSequence):
     def _get_x_batch(self, idx):
-        x = self.x[idx * self.batch_size : (idx + 1) * self.batch_size]
-        x = [self.data_manager.load_raw_image(img) for img in x]
-        x = [
-            self.data_manager.downsampling(img, self.data_manager.lr_shape)
-            for img in x
-        ]
-        x = [
-            self.data_manager.upsampling(img, self.data_manager.hr_shape) for img in x
-        ]
-        x = [self.data_manager.train_preprocess(img) for img in x]
+        x = self._get_image_batch(idx)
+        x = [self.data_manager.resampling(img, self.data_manager.lr_shape) for img in x]
+        x = [self.data_manager.resampling(img, self.data_manager.hr_shape) for img in x]
         x = tf.cast(x, dtype=tf.float32)
         return x
