@@ -1,58 +1,87 @@
 import os
+import shutil
 import glob
 import ipdb
 import math
 import numpy as np
 from numpy.lib.twodim_base import flipud
 import tensorflow as tf
-import imgaug.augmenters as iaa
-import imgaug
 
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageOps
+
+
+def check_pixels(image, max=255, min=0):
+    if (np.amax(image) > max) and (np.amin(image) < min):
+        raise Exception(
+            "Valor do pixels utrapassou o limite do intervalo [0, 255]."
+            + f"Valor mínimo encontrado {np.amin(image)}, valor máximo encontrado {np.amax(image)}"
+        )
+
+
+def cant_finish_with_bar(path):
+    if path[-1] == "/":
+        path.pop(-1)
+    return path
+
+
+def must_finish_with_bar(path):
+    if path[-1] != "/":
+        path += "/"
+    return path
 
 
 class ImagesManager:
-    def __init__(
-        self,
-        dataset_dir,
-        dataset_name,
-        net_name,
-        hr_shape,
-        lr_shape,
-        output_format="PNG",
-    ):
+    def __init__(self, opts):
+        img_info = opts.get("images")
 
-        self.dataset_name = dataset_name
-        self.dataset_dir = dataset_dir.format(dataset_name)
+        hr_size = img_info.get("hr_size")
+        lr_size = img_info.get("lr_size")
+        self.lr_shape = (lr_size, lr_size)
+        self.hr_shape = (hr_size, hr_size)
 
-        self.lr_shape = lr_shape
-        self.hr_shape = hr_shape
+        datasets_info = opts.get("datasets")
 
-        self.net_name = net_name
+        train_dataset = datasets_info.get("train")
+        self.train_dataset_name = train_dataset.get("name")
+        self.train_dataset_dir = must_finish_with_bar(train_dataset.get("dir"))
+
+        test_dataset = datasets_info.get("test")
+        self.test_dataset_name = test_dataset.get("name")
+        self.test_dataset_dir = must_finish_with_bar(test_dataset.get("dir"))
+        self.test_size = test_dataset.get("size")
+
+        self.batch_size = opts.get("batch_size")
+        self.epochs = opts.get("epochs")
+
+        self.net_name = opts.get("net")
         self.base_output_dir = "results/"
-        self.output_loc = f"{self.base_output_dir}{self.dataset_name}/{self.net_name}/"
-        self.output_format = output_format
+        self.train_monitor_log = (
+            f"{self.base_output_dir}{self.train_dataset_name}/{self.net_name}/"
+        )
+        self.format = "png"
 
-        # Listando os nomes de todos os arquivos no diretório do dataset
-        self.images_names = glob.glob("{}*.*".format(self.dataset_dir))
+        # Listando os nomes de todos os arquivos no diretório do dataset de treino
+        self.train_images_names = glob.glob("{}*.*".format(self.train_dataset_dir))
+        np.random.shuffle(self.train_images_names)
 
-        # Copiando nome das imagens para treino e randomizando sua disposição
-        self.train_images = self.images_names.copy()
-        np.random.shuffle(self.train_images)
+        # Listando os nomes de todos os arquivos no diretório do dataset de treino
+        self.test_images_names = glob.glob("{}*.*".format(self.test_dataset_dir))[
+            : self.test_size
+        ]
+        np.random.shuffle(self.test_images_names)
 
-        # Copiando nome das imagens para teste e randomizando sua disposição
-        self.test_images = self.images_names.copy()[: int(len(self.images_names) / 10)]
-        np.random.shuffle(self.test_images)
-
-    def normalize(self, input_data, scale_map=(0, 1)):
-        new_min, new_max = scale_map
-        max_value = 255
-        min_value = 0
+    def normalize(self, input_data):
+        new_min, new_max = -1, 1
+        min_value, max_value = 0, 255
         scale = new_max - new_min
 
-        return (scale * ((input_data - min_value) / (max_value - min_value))) + new_min
+        normalized = (
+            scale * ((input_data - min_value) / (max_value - min_value))
+        ) + new_min
+        check_pixels(normalized, max=1, min=0)
+        return normalized
 
-    def denormalize(self, input_data, scale_map=(0, 1)):
+    def denormalize(self, input_data):
         """
         Args:
             input_data (np.array): Imagem normalizada em formato de array
@@ -60,94 +89,84 @@ class ImagesManager:
         Returns:
             np.array: Imagem desnormalizada com pixels de [0 - 255] no formato uint8
         """
-        min_value, max_value = scale_map
-        new_max = 255
-        new_min = 0
+        min_value, max_value = -1, 1
+        new_min, new_max = 0, 255
         scale = max_value - min_value
 
-        input_data = ((input_data - min_value) / scale) * (new_max - new_min)
+        output = ((input_data - min_value) / scale) * (new_max - new_min)
 
-        if (np.amax(input_data) > 255) and (np.amin(input_data) < 0):
-            raise Exception(
-                f"Valor do pixels utrapassou o limite do intervalo [0, 255]. Valor mínimo encontrado {np.amin(input_data)}, valor máximo encontrado {np.amax(input_data)}"
-            )
+        check_pixels(output)
 
-        return input_data
+        return output
+
+    def process_image(self, image):
+        image = np.array(image).astype(np.float32)
+        check_pixels(image)
+        return image
 
     def load_image(self, image_path):
         image = Image.open(image_path)
         image = image.convert("RGB")
-        image = np.array(image).astype(np.float32)
         return image
 
-    def load_images(self, batch_size, path=None, is_test=False):
+    def load_image_batch(self, batch_size, is_test=False):
         images_batch = []
         for i in range(batch_size):
-            if not path:
-                if not is_test:
-                    # image_name = self.train_images.pop(i)
-                    image_name = self.train_images[i]
-                else:
-                    image_name = self.test_images[i]
+            if is_test:
+                image_name = self.test_images_names[i]
 
                 images_batch.append(self.load_image(image_name))
-
-            else:
-                images_batch.append(self.load_image(path))
 
         return images_batch
 
     def resampling(self, image, shape):
-        """Redimensiona a imagem para a resolução desejada
+        return image.resize(shape, resample=Image.BICUBIC)
 
-        Args:
-            image ([type]): [description]
-            shape ([type]): [description]
-        """
-        seq = iaa.Sequential([iaa.Resize(shape[0], interpolation="cubic")])
+    def augment_base(self, image):
 
-        return seq(image=image)
+        if np.random.uniform() < 0.5:
+            image = ImageOps.mirror(image)
 
-    def augment(self, images):
-        if isinstance(images, list):
-            images = np.array(images).astype(np.uint8)
+        if np.random.uniform() < 0.5:
+            image = ImageOps.flip(image)
 
-        org_img_size = images.shape[1]
+        return image
 
-        seq = iaa.Sequential(
-            [
-                iaa.Crop(px=(0, int(org_img_size / 4)), keep_size=True),
-                iaa.Fliplr(0.5),
-                iaa.Flipud(0.5),
-                iaa.GaussianBlur(sigma=(0, 3.0)),
-                iaa.MultiplyBrightness((0.7, 1.3)),
-                iaa.KeepSizeByResize(
-                    iaa.Resize(np.random.uniform(0.75, 1.75), interpolation=imgaug.ALL)
-                ),
-                iaa.MultiplyHueAndSaturation(1.5),
-            ]
-        )
+    def augment_x(self, image):
 
-        images = seq(images=images)
+        # if np.random.uniform() < 0.5:
+        #     bright_enhancer = ImageEnhance.Brightness(image)
+        #     factor = np.random.uniform(0.5, 1.5)
+        #     image = bright_enhancer.enhance(factor)
 
-        return images
+        # # Faz um ajuste randômico no contraste da imagem
+        # if np.random.uniform() < 0.5:
+        #     contrast_enhancer = ImageEnhance.Contrast(image)
+        #     factor = np.random.uniform(0.5, 2.5)
+        #     image = contrast_enhancer.enhance(factor)
+
+        return image
 
     def load_test_images(self):
         pass
 
-    def get_images(self, batch_size, path=None, is_test=False):
-        images = self.load_images(batch_size, path, is_test)
+    def get_images(self, batch_size, is_test=False):
+        images = self.load_image_batch(batch_size, is_test)
 
         lr_images = []
         hr_images = []
 
-        if not is_test:
-            images = self.augment(images)
-
         for image in images:
+            lr_img = hr_img = image
+            if not is_test:
+                lr_img = hr_img = self.augment_base(image)
+                lr_img = self.augment_x(image)
 
-            lr_img = self.resampling(image, self.lr_shape)
-            hr_img = self.resampling(image, self.hr_shape)
+            lr_img = self.resampling(lr_img, self.lr_shape)
+            hr_img = self.resampling(hr_img, self.hr_shape)
+
+            lr_img = self.process_image(lr_img)
+            hr_img = self.process_image(hr_img)
 
             # Faz a normalização da escala [0-255] para [0-1]
             lr_img = self.normalize(lr_img)
@@ -192,36 +211,30 @@ class ImagesManager:
 
     def unprocess_image(self, image, generated=False):
         image = np.array(image)
-        image = np.clip(image, 0, 255)
+        # image = np.clip(image, 0, 255)
 
         # Se for uma imagem gerada, fazer uma correção de gamma
         # if generated:
         #     image = 255 * ((image / 255) ** (2.2))
-
         image = image.astype(np.uint8)
+        check_pixels(image)
         pil_image = Image.fromarray(image, "RGB")
 
         return pil_image
 
-    def rebuild_images(self, images, generated=False, scale_map=None):
-        if not scale_map:
-            if generated:
-                scale_map = (-1, 1)
-            else:
-                scale_map = (0, 1)
-
-        images = [self.denormalize(image, scale_map) for image in images]
+    def rebuild_images(self, images, generated=False):
+        images = [self.denormalize(image) for image in images]
         images = [self.unprocess_image(image, generated) for image in images]
 
         return images
 
-    def sample_per_epoch(
+    def generate_and_save_images(
         self,
         generator_net,
         epoch,
         batch_size,
     ):
-        images_names = f"{self.output_loc}test_"
+        images_names = f"{self.train_monitor_log}test_"
 
         _, lr_imgs = self.get_images(batch_size, is_test=True)
 
@@ -239,13 +252,13 @@ class ImagesManager:
             image_path = images_names + f"{index}/{epoch}_generated.jpg"
             hr_gen.save(image_path)
 
-    def sample_per_epoch_cnn(
+    def generate_and_save_images_cnn(
         self,
         generator_net,
         epoch,
         batch_size,
     ):
-        images_names = f"{self.output_loc}test_"
+        images_names = f"{self.train_monitor_log}test_"
 
         _, lr_imgs = self.get_images_cnn(batch_size, is_test=True)
 
@@ -263,30 +276,32 @@ class ImagesManager:
             image_path = images_names + f"{index}/{epoch}_generated.jpg"
             hr_gen.save(image_path)
 
-    def sample_specific(self, generator_net, image_path, image_name):
-        img_format = self.output_format.lower()
-        os.makedirs(image_path, exist_ok=True)
+    def sample_interpolation(self, interpolation):
 
-        original_path = image_path + image_name
-        gen_path = image_path + f"test_gen.{img_format}"
-        low_path = image_path + f"low_resolution.{img_format}"
+        lr_imgs = self.load_test_images()
 
-        _, lr_img = self.get_images(1, original_path, True)
+        hr_interpolated = interpolation(images=lr_imgs)
 
-        hr_gen = generator_net.predict(lr_img)
-        hr_gen = self.rebuild_images(hr_gen, True)[0]
+        hr_interpolated = self.rebuild_images(hr_interpolated, True)
 
-        lr_img = self.rebuild_images(lr_img)[0]
+        if not self.epochs:
+            raise Exception("missing epochs")
 
-        hr_gen.save(gen_path)
-        lr_img.save(low_path)
+        for index, hr_gen in enumerate(hr_interpolated):
+            name = str(index).zfill(len(str(len(hr_interpolated))))
+            image_path = f"{self.train_monitor_log}{name}_generated.jpg"
+            hr_gen.save(image_path)
 
     def initialize_dirs(self, testing_batch_size, total_epochs, originals=True):
-        os.makedirs(f"{self.output_loc}", exist_ok=True)
+        try:
+            os.makedirs(self.train_monitor_log)
+        except FileExistsError:
+            shutil.rmtree(self.train_monitor_log, ignore_errors=True)
+            os.makedirs(self.train_monitor_log)
 
         self.epochs = total_epochs
-        imgs = self.load_images(testing_batch_size, is_test=True)
-        images_dir = f"{self.output_loc}test_"
+        imgs = self.load_image_batch(testing_batch_size, is_test=True)
+        images_dir = f"{self.train_monitor_log}test_"
 
         for idx, img in enumerate(imgs):
             sample_dir = images_dir + f"{idx}/"
@@ -307,9 +322,9 @@ class ImagesManager:
 
 class ImageSequence(tf.keras.utils.Sequence):
     def __init__(self, image_manager, batch_size):
-        self.data_manager = image_manager
+        self.mngr = image_manager
 
-        self.images = self.data_manager.images_names
+        self.images = self.mngr.train_images_names
         self.batch_size = batch_size
 
     def __len__(self):
@@ -323,19 +338,24 @@ class ImageSequence(tf.keras.utils.Sequence):
 
     def _get_image_batch(self, idx):
         imgs = self.images[idx * self.batch_size : (idx + 1) * self.batch_size]
-        imgs = [self.data_manager.load_image(img) for img in imgs]
-        imgs = self.data_manager.augment(imgs)
+        imgs = [self.mngr.load_image(img) for img in imgs]
+        imgs = [self.mngr.augment_base(img) for img in imgs]
         return imgs
 
     def _get_x_batch(self, idx):
         x = self._get_image_batch(idx)
-        x = [self.data_manager.resampling(img, self.data_manager.lr_shape) for img in x]
+        x = [self.mngr.augment_x(img) for img in x]
+        x = [self.mngr.resampling(img, self.mngr.lr_shape) for img in x]
+        x = [self.mngr.process_image(img) for img in x]
+        x = [self.mngr.normalize(img) for img in x]
         x = tf.cast(x, dtype=tf.float32)
         return x
 
     def _get_y_batch(self, idx):
         y = self._get_image_batch(idx)
-        y = [self.data_manager.resampling(img, self.data_manager.hr_shape) for img in y]
+        y = [self.mngr.resampling(img, self.mngr.hr_shape) for img in y]
+        y = [self.mngr.process_image(img) for img in y]
+        y = [self.mngr.normalize(img) for img in y]
         y = tf.cast(y, dtype=tf.float32)
         return y
 
@@ -343,7 +363,66 @@ class ImageSequence(tf.keras.utils.Sequence):
 class CNNImageSequence(ImageSequence):
     def _get_x_batch(self, idx):
         x = self._get_image_batch(idx)
-        x = [self.data_manager.resampling(img, self.data_manager.lr_shape) for img in x]
-        x = [self.data_manager.resampling(img, self.data_manager.hr_shape) for img in x]
+        x = [self.mngr.augment_x(img) for img in x]
+        x = [self.mngr.resampling(img, self.mngr.lr_shape) for img in x]
+        x = [self.mngr.resampling(img, self.mngr.hr_shape) for img in x]
+        x = [self.mngr.process_image(img) for img in x]
         x = tf.cast(x, dtype=tf.float32)
         return x
+
+
+def get_image_dataset(images_manager, batch_size):
+    images_manager
+    images_dataset = tf.data.Dataset.list_files("../datasets/DIV2K_train_HR/*.*")
+
+    def process_path(img_path):
+        img = tf.io.read_file(img_path)
+        img = tf.io.decode_png(img, channels=3)
+        # img = img.numpy()
+        # img = images_manager.augment_base(img)
+
+        # img = images_manager.augment_x(img)
+
+        # x_images = images_manager.resampling(img, images_manager.lr_shape)
+        # y_images = images_manager.resampling(img, images_manager.hr_shape)
+        x_images = tf.image.resize(img, images_manager.lr_shape)
+        y_images = tf.image.resize(img, images_manager.hr_shape)
+
+        return x_images, y_images
+
+    images_dataset = images_dataset.map(
+        process_path, num_parallel_calls=tf.data.AUTOTUNE
+    )
+
+    def configure_for_performance(ds):
+        ds = ds.cache()
+        ds = ds.shuffle(buffer_size=1000)
+        ds = ds.batch(batch_size)
+        ds = ds.prefetch(buffer_size=tf.data.AUTOTUNE)
+        return ds
+
+    images_dataset = configure_for_performance(images_dataset)
+
+    return images_dataset
+
+
+def run_interpolations(dataset_info, img_shapes):
+    hr_img_shape = img_shapes.get("hr_img_shape")
+    lr_img_shape = img_shapes.get("lr_img_shape")
+
+    hr_shape = img_shapes.get("hr_shape")
+    reshape_size = hr_shape[0]
+
+    dataset_dir = dataset_info.get("dataset_dir")
+    dataset_name = dataset_info.get("dataset_name")
+
+    methods = ["nearest", "linear", "area", "cubic"]
+
+    for method in methods:
+        image_manager = ImagesManager(
+            dataset_dir, dataset_name, method, hr_img_shape, lr_img_shape
+        )
+
+        seq = iaa.Sequential([iaa.Resize(reshape_size, interpolation=method)])
+
+        image_manager.sample_interpolation(seq)

@@ -3,25 +3,18 @@ from tensorflow.keras import losses
 from keras import backend as K
 import ipdb
 
+from registry import LOSS_REGISTRY
 
-def l1_loss(y_true, y_pred):
-    """[summary]
 
-    Args:
-        y_true (tf.Tensor):  Ground-truth tensor with shape (batch_size, height, width, channels).
-        y_pred (tf.Tensor): Input tensor with shape (batch_size, height, width, channels).
-
-    Returns:
-        tf.Tensor: [description]
-    """
-    loss = losses.MeanAbsoluteError(
-        reduction=losses.Reduction.SUM_OVER_BATCH_SIZE, name="l1_loss"
-    )
+@LOSS_REGISTRY.register()
+def mae(y_true, y_pred):
+    loss = losses.MeanAbsoluteError(reduction=losses.Reduction.SUM_OVER_BATCH_SIZE)
     return loss(y_true, y_pred)
 
 
-def build_perceptual_vgg(input_shape, layers):
-    vgg = build_vgg(input_shape, layers)
+@LOSS_REGISTRY.register()
+def build_perceptual_vgg(input_shape, layer=None, full_net=False):
+    vgg = build_vgg(input_shape, layer=layer, full_net=full_net)
 
     def perceptual_loss(y_true, y_pred):
         """O loss perceptível é baseado no loss l1 feito sobre as features extraidas do modelo
@@ -38,7 +31,7 @@ def build_perceptual_vgg(input_shape, layers):
         y_pred_features = vgg(y_pred)
         y_true_features = vgg(y_true)
 
-        return l1_loss(y_pred_features, y_true_features)
+        return mae(y_pred_features, y_true_features)
 
     return perceptual_loss
 
@@ -60,7 +53,7 @@ def _gram_mat(x):
     return gram
 
 
-def style_loss(y_true, y_pred):
+def build_style_loss(input_shape, layers, full_net=False):
     """
     Args:
         y_true (Tensor): Ground-truth tensor with shape (n, c, h, w).
@@ -72,43 +65,34 @@ def style_loss(y_true, y_pred):
     style_weight = 1.0
     criterion = "l1"
 
-    # extract vgg features
-    x_features = vgg(x)
-    gt_features = vgg(gt.detach())
+    vgg = build_vgg(input_shape, layers, full_net)
 
-    # calculate style loss
-    if style_weight > 0:
-        style_loss = 0
-        for k in x_features.keys():
-            style_loss += (
-                criterion(_gram_mat(x_features[k]), _gram_mat(gt_features[k]))
-                * layer_weights[k]
-            )
+    def style_loss(y_true, y_pred):
 
-        style_loss *= style_weight
+        # extract vgg features
+        x_features = vgg(y_pred)
+        gt_features = vgg(y_true)
 
-    else:
-        style_loss = None
+        # calculate style loss
+        if style_weight > 0:
+            style_loss = 0
+            for k in x_features.keys():
+                style_loss += (
+                    criterion(_gram_mat(x_features[k]), _gram_mat(gt_features[k]))
+                    * layer_weights[k]
+                )
+
+            style_loss *= style_weight
+
+        else:
+            style_loss = None
+
+        return style_loss
 
     return style_loss
 
 
+@LOSS_REGISTRY.register()
 def gan_loss(y_true, y_pred):
-    """[summary]
-
-    Args:
-        y_true (tf.Tensor):  Ground-truth tensor with shape (batch_size, height, width, channels).
-        y_pred (tf.Tensor): Input tensor with shape (batch_size, height, width, channels).
-
-    Returns:
-        tf.Tensor: [description]
-    """
-    # from_logits=True
-    return losses.binary_crossentropy(y_true, y_pred)
-
-
-def build_vgg_loss(vgg):
-    def vgg_loss(y_true, y_pred):
-        return K.mean(K.square(vgg(y_true) - vgg(y_pred)))
-
-    return vgg_loss
+    loss = losses.BinaryCrossentropy()
+    return loss(y_true, y_pred)

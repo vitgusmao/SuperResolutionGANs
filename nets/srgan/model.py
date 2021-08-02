@@ -1,22 +1,17 @@
 import ipdb
-from numpy.core.numeric import full
 import tensorflow as tf
-from tensorflow.python.keras.engine import training
+import numpy as np
 
 keras = tf.keras
 
-from losses import build_perceptual_vgg
-from nets.srgan.discriminator import build_discriminator
-from metrics import psnr, ssim, accuracy
-from nets.srgan.generator import build_generator
 from data_manager import ImagesManager, ImageSequence
 
+from nets.srgan.discriminator import build_discriminator
+from nets.srgan.generator import build_generator
+from losses import build_perceptual_vgg
+from metrics import psnr, ssim, accuracy
 
-class SamplesCallback(keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-
-        if epoch % 5 == 0:
-            self.model.img_m.generate_and_save_images(self.model.gen, epoch, 2)
+from registry import MODEL_REGISTRY
 
 
 class SRGAN(keras.Model):
@@ -66,20 +61,19 @@ class SRGAN(keras.Model):
         # Train Generator
         with tf.GradientTape() as gen_tape:
             y_pred_gen = self.gen(x_batch, training=True)
-            y_pred_disc_pred = self.disc(y_pred_gen, training=False)
+
+            y_pred_disc_real = self.disc(y_batch, training=False)
+            y_pred_disc_fake = self.disc(y_pred_gen, training=False)
+
+            y_real = tf.zeros_like(y_pred_disc_real, dtype=tf.float32)
+            real_loss = self.gan_loss(y_real, y_pred_disc_real)
+            y_fake = tf.ones_like(y_pred_disc_fake, dtype=tf.float32)
+            fake_loss = self.gan_loss(y_fake, y_pred_disc_fake)
 
             # Generator losses
-            gan_loss = (
-                self.gan_loss(tf.ones_like(y_pred_disc_pred), y_pred_disc_pred) * 1e-3
-            )
+            gan_loss = ((real_loss + fake_loss) / 2) * 1e-3
             perceptual_loss = self.perceptual_loss(y_batch, y_pred_gen) * 1
-
-            # Total generator loss
             total_loss = gan_loss + perceptual_loss
-
-            step_output.update(
-                {m.__name__: m(y_batch, y_pred_gen) for m in self.gen_metrics}
-            )
 
         # Get the gradients for the generator
         gen_grads = gen_tape.gradient(total_loss, self.gen.trainable_variables)
@@ -88,29 +82,24 @@ class SRGAN(keras.Model):
         self.gen_optimizer.apply_gradients(zip(gen_grads, self.gen.trainable_variables))
 
         # Train Discriminator - Real
-        with tf.GradientTape() as disc_real_tape:
-
-            y_pred_gen = self.gen(x_batch, training=False)
-            y_pred_disc_pred = self.disc(y_pred_gen, training=False)
+        with tf.GradientTape() as disc_tape:
             y_pred_disc_real = self.disc(y_batch, training=True)
-            y_pred = y_pred_disc_real - y_pred_disc_pred
+            y_pred_disc_fake = self.disc(y_pred_gen, training=False)
 
-            # Discriminator loss
-            real_loss = self.gan_loss(
-                tf.ones_like(y_pred_disc_real, dtype=tf.float32) * 0.9, y_pred
-            )
+            # loss
+            y_real = tf.ones_like(
+                y_pred_disc_real, dtype=tf.float32
+            ) - np.random.uniform(0, 0.1, y_pred_disc_real.shape)
+            y_fake = tf.zeros_like(
+                y_pred_disc_fake, dtype=tf.float32
+            ) + np.random.uniform(0, 0.1, y_pred_disc_fake.shape)
 
-            step_output.update(
-                {
-                    f"{m.__name__}_real": m(
-                        tf.ones_like(y_pred_disc_real), y_pred_disc_real
-                    )
-                    for m in self.disc_metrics
-                }
-            )
+            real_loss = self.gan_loss(y_real, y_pred_disc_real)
+            fake_loss = self.gan_loss(y_fake, y_pred_disc_fake)
+            disc_loss = (real_loss + fake_loss) * 0.5
 
         # Get the gradients for the discriminator
-        disc_grads = disc_real_tape.gradient(real_loss, self.disc.trainable_variables)
+        disc_grads = disc_tape.gradient(disc_loss, self.disc.trainable_variables)
 
         # Update the weights of the discriminator
         self.disc_optimizer.apply_gradients(
@@ -118,36 +107,49 @@ class SRGAN(keras.Model):
         )
 
         # Train Discriminator - Fake
-        with tf.GradientTape() as disc_fake_tape:
-
-            y_pred_gen = self.gen(x_batch, training=False)
-            y_pred_disc_pred = self.disc(y_pred_gen, training=True)
+        with tf.GradientTape() as disc_tape:
             y_pred_disc_real = self.disc(y_batch, training=False)
-            y_pred = y_pred_disc_pred - y_pred_disc_real
+            y_pred_disc_fake = self.disc(y_pred_gen, training=True)
 
-            # Discriminator loss
-            fake_loss = self.gan_loss(
-                tf.zeros_like(y_pred_disc_pred, dtype=tf.float32), y_pred
-            )
+            # loss
+            y_real = tf.ones_like(
+                y_pred_disc_real, dtype=tf.float32
+            ) - np.random.uniform(0, 0.1)
+            y_fake = tf.zeros_like(
+                y_pred_disc_fake, dtype=tf.float32
+            ) + np.random.uniform(0, 0.1)
 
-            step_output.update(
-                {
-                    f"{m.__name__}_fake": m(
-                        tf.zeros_like(y_pred_disc_pred), y_pred_disc_pred
-                    )
-                    for m in self.disc_metrics
-                }
-            )
+            real_loss = self.gan_loss(y_real, y_pred_disc_real)
+            fake_loss = self.gan_loss(y_fake, y_pred_disc_fake)
+            disc_loss = (real_loss + fake_loss) * 0.5
 
         # Get the gradients for the discriminator
-        disc_grads = disc_fake_tape.gradient(fake_loss, self.disc.trainable_variables)
+        disc_grads = disc_tape.gradient(disc_loss, self.disc.trainable_variables)
 
         # Update the weights of the discriminator
         self.disc_optimizer.apply_gradients(
             zip(disc_grads, self.disc.trainable_variables)
         )
 
-        disc_loss = (real_loss + fake_loss) * 0.5
+        step_output.update(
+            {m.__name__: m(y_batch, y_pred_gen) for m in self.gen_metrics}
+        )
+        step_output.update(
+            {
+                f"{m.__name__}_real": m(
+                    tf.ones_like(y_pred_disc_real), y_pred_disc_real
+                )
+                for m in self.disc_metrics
+            }
+        )
+        step_output.update(
+            {
+                f"{m.__name__}_fake": m(
+                    tf.zeros_like(y_pred_disc_fake), y_pred_disc_fake
+                )
+                for m in self.disc_metrics
+            }
+        )
 
         step_output.update(
             {
@@ -158,69 +160,58 @@ class SRGAN(keras.Model):
 
         return step_output
 
-    def test_step(self, batch_data):
-        # Unpack the data
-        x_batch, y_batch = batch_data
+    # def test_step(self, batch_data):
+    #     # Unpack the data
+    #     x_batch, y_batch = batch_data
 
-        y_pred_gen = self.gen(x_batch, training=False)
+    #     y_pred_gen = self.gen(x_batch, training=False)
 
-        y_pred_disc_pred = self.disc(y_pred_gen, training=False)
-        y_pred_disc_real = self.disc(y_batch, training=False)
+    #     y_pred_disc_pred = self.disc(y_pred_gen, training=False)
+    #     y_pred_disc_real = self.disc(y_batch, training=False)
 
-        # Discriminator loss
-        disc_pred_loss = self.adv_loss(
-            tf.zeros_like(y_pred_disc_pred), y_pred_disc_pred
-        )
-        disc_real_loss = self.adv_loss(tf.ones_like(y_pred_disc_real), y_pred_disc_real)
-        disc_loss = (disc_real_loss + disc_pred_loss) * 0.5
+    #     # Discriminator loss
+    #     disc_pred_loss = self.adv_loss(
+    #         tf.zeros_like(y_pred_disc_pred), y_pred_disc_pred
+    #     )
+    #     disc_real_loss = self.adv_loss(tf.ones_like(y_pred_disc_real), y_pred_disc_real)
+    #     disc_loss = (disc_real_loss + disc_pred_loss) * 0.5
 
-        # Generator loss
-        adversarial_loss = self.adv_loss(
-            tf.ones_like(y_pred_disc_pred), y_pred_disc_pred
-        )
-        content_loss = self.adv_loss(y_batch, y_pred_gen) * 1e-2
-        perceptual_loss = self.perceptual_loss(y_batch, y_pred_gen)
+    #     # Generator loss
+    #     adversarial_loss = self.adv_loss(
+    #         tf.ones_like(y_pred_disc_pred), y_pred_disc_pred
+    #     )
+    #     content_loss = self.adv_loss(y_batch, y_pred_gen) * 1e-2
+    #     perceptual_loss = self.perceptual_loss(y_batch, y_pred_gen)
 
-        # Total generator loss
-        total_loss = adversarial_loss + perceptual_loss  # + content_loss
+    #     # Total generator loss
+    #     total_loss = adversarial_loss + perceptual_loss  # + content_loss
 
-        self.compiled_metrics.update_state(y_batch, y_pred_gen)
+    #     self.compiled_metrics.update_state(y_batch, y_pred_gen)
 
-        return {m.name: m.result() for m in self.metrics}
+    #     return {m.name: m.result() for m in self.metrics}
 
 
-def compile_and_train(img_shapes, dataset_info, train_args):
-    hr_img_shape = img_shapes.get("hr_img_shape")
-    lr_img_shape = img_shapes.get("lr_img_shape")
+@MODEL_REGISTRY.register()
+def srgan(opts, image_manager):
+    imgs_opts = opts.get("images")
 
-    hr_shape = img_shapes.get("hr_shape")
-    lr_shape = img_shapes.get("lr_shape")
+    lr_size = imgs_opts.get("lr_size")
+    hr_size = imgs_opts.get("hr_size")
+    channels = imgs_opts.get("channels")
 
-    dataset_dir = dataset_info.get("dataset_dir")
-    dataset_name = dataset_info.get("dataset_name")
+    lr_shape = (lr_size, lr_size, channels)
+    hr_shape = (hr_size, hr_size, channels)
 
-    batch_size = train_args.get("batch_size")
-    epochs = train_args.get("epochs")
+    train_opts = opts.get("train")
 
-    net_name = "SRGAN"
+    g_opts = train_opts.get("generator")
+    g_lr = g_opts.get("lr")
 
-    image_manager = ImagesManager(
-        dataset_dir, dataset_name, net_name, hr_img_shape, lr_img_shape
-    )
-    image_sequence = ImageSequence(image_manager, 1)
-    image_manager.initialize_dirs(2, epochs)
+    d_opts = train_opts.get("discriminator")
+    d_lr = d_opts.get("lr")
 
     generator = build_generator(lr_shape)
     discriminator = build_discriminator(hr_shape)
-
-    checkpoint_filepath = f"checkpoints/{net_name}/"
-    model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
-        filepath=checkpoint_filepath,
-        save_weights_only=True,
-        monitor="psnr",
-        mode="max",
-        save_best_only=True,
-    )
 
     # Create enhanced super resolution gan model
     model = SRGAN(
@@ -229,23 +220,10 @@ def compile_and_train(img_shapes, dataset_info, train_args):
 
     # Compile the model
     model.compile(
-        gen_optimizer=keras.optimizers.Adam(learning_rate=2e-5),
-        disc_optimizer=keras.optimizers.Adam(learning_rate=1e-4),
+        gen_optimizer=keras.optimizers.Adam(learning_rate=g_lr),
+        disc_optimizer=keras.optimizers.Adam(learning_rate=d_lr),
         gen_metrics=[psnr, ssim],
         disc_metrics=[accuracy],
     )
 
-    try:
-        model.load_weights(checkpoint_filepath)
-    except Exception:
-        pass
-
-    history = model.fit(
-        image_sequence,
-        batch_size=batch_size,
-        epochs=epochs,
-        #  use_multiprocessing=True,
-        #  workers=2,
-        callbacks=[SamplesCallback(), model_checkpoint_callback],
-    )
-    # print(model.disc(image_sequence[200][1]))
+    return model
