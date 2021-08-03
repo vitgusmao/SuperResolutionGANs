@@ -1,33 +1,20 @@
-import os
-import shutil
 import glob
 import ipdb
 import math
 import numpy as np
-from numpy.lib.twodim_base import flipud
+import os
+import shutil
 import tensorflow as tf
 
 from PIL import Image, ImageEnhance, ImageOps
 
-
-def check_pixels(image, max=255, min=0):
-    if (np.amax(image) > max) and (np.amin(image) < min):
-        raise Exception(
-            "Valor do pixels utrapassou o limite do intervalo [0, 255]."
-            + f"Valor mínimo encontrado {np.amin(image)}, valor máximo encontrado {np.amax(image)}"
-        )
-
-
-def cant_finish_with_bar(path):
-    if path[-1] == "/":
-        path.pop(-1)
-    return path
-
-
-def must_finish_with_bar(path):
-    if path[-1] != "/":
-        path += "/"
-    return path
+from utils import (
+    must_finish_with_bar,
+    cant_finish_with_bar,
+    check_pixels,
+    normalize,
+    denormalize,
+)
 
 
 class ImagesManager:
@@ -69,35 +56,6 @@ class ImagesManager:
             : self.test_size
         ]
         np.random.shuffle(self.test_images_names)
-
-    def normalize(self, input_data):
-        new_min, new_max = -1, 1
-        min_value, max_value = 0, 255
-        scale = new_max - new_min
-
-        normalized = (
-            scale * ((input_data - min_value) / (max_value - min_value))
-        ) + new_min
-        check_pixels(normalized, max=1, min=0)
-        return normalized
-
-    def denormalize(self, input_data):
-        """
-        Args:
-            input_data (np.array): Imagem normalizada em formato de array
-
-        Returns:
-            np.array: Imagem desnormalizada com pixels de [0 - 255] no formato uint8
-        """
-        min_value, max_value = -1, 1
-        new_min, new_max = 0, 255
-        scale = max_value - min_value
-
-        output = ((input_data - min_value) / scale) * (new_max - new_min)
-
-        check_pixels(output)
-
-        return output
 
     def process_image(self, image):
         image = np.array(image).astype(np.float32)
@@ -147,9 +105,6 @@ class ImagesManager:
 
         return image
 
-    def load_test_images(self):
-        pass
-
     def get_images(self, batch_size, is_test=False):
         images = self.load_image_batch(batch_size, is_test)
 
@@ -169,8 +124,8 @@ class ImagesManager:
             hr_img = self.process_image(hr_img)
 
             # Faz a normalização da escala [0-255] para [0-1]
-            lr_img = self.normalize(lr_img)
-            hr_img = self.normalize(hr_img)
+            lr_img = normalize(lr_img)
+            hr_img = normalize(hr_img)
 
             lr_images.append(lr_img)
             hr_images.append(hr_img)
@@ -197,8 +152,8 @@ class ImagesManager:
             hr_img = self.resampling(image, self.hr_shape)
 
             # Faz a normalização da escala [0-255] para [0-1]
-            lr_img = self.normalize(lr_img)
-            hr_img = self.normalize(hr_img)
+            lr_img = normalize(lr_img)
+            hr_img = normalize(hr_img)
 
             lr_images.append(lr_img)
             hr_images.append(hr_img)
@@ -214,8 +169,8 @@ class ImagesManager:
         # image = np.clip(image, 0, 255)
 
         # Se for uma imagem gerada, fazer uma correção de gamma
-        # if generated:
-        #     image = 255 * ((image / 255) ** (2.2))
+        if generated:
+            image = 255 * ((image / 255) ** (2.2))
         image = image.astype(np.uint8)
         check_pixels(image)
         pil_image = Image.fromarray(image, "RGB")
@@ -223,7 +178,7 @@ class ImagesManager:
         return pil_image
 
     def rebuild_images(self, images, generated=False):
-        images = [self.denormalize(image) for image in images]
+        images = [denormalize(image) for image in images]
         images = [self.unprocess_image(image, generated) for image in images]
 
         return images
@@ -240,7 +195,7 @@ class ImagesManager:
 
         hr_fakes = generator_net(lr_imgs, training=False)
 
-        hr_fakes = self.rebuild_images(hr_fakes, True)
+        hr_fakes = self.rebuild_images(hr_fakes, generated=True)
 
         if not self.epochs:
             raise Exception("missing epochs")
@@ -289,7 +244,7 @@ class ImagesManager:
 
         for index, hr_gen in enumerate(hr_interpolated):
             name = str(index).zfill(len(str(len(hr_interpolated))))
-            image_path = f"{self.train_monitor_log}{name}_generated.jpg"
+            image_path = f"{self.train_monitor_log}{name}_generated.{self.format}"
             hr_gen.save(image_path)
 
     def initialize_dirs(self, testing_batch_size, total_epochs, originals=True):
@@ -308,8 +263,8 @@ class ImagesManager:
             os.makedirs(sample_dir, exist_ok=True)
 
             if originals:
-                hr_path = sample_dir + "high_resolution.jpg"
-                lr_path = sample_dir + "low_resolution.jpg"
+                hr_path = sample_dir + f"high_resolution.{self.format}"
+                lr_path = sample_dir + f"low_resolution.{self.format}"
 
                 hr_img = self.resampling(img, self.hr_shape)
                 hr_img = self.unprocess_image(hr_img)
@@ -319,16 +274,78 @@ class ImagesManager:
                 lr_img = self.unprocess_image(lr_img)
                 lr_img.save(lr_path)
 
+    def get_dataset(self):
+        opts = {
+            "lr_shape": self.lr_shape,
+            "hr_shape": self.hr_shape,
+            "batch_size": self.batch_size,
+        }
 
-class ImageSequence(tf.keras.utils.Sequence):
-    def __init__(self, image_manager, batch_size):
-        self.mngr = image_manager
+        return ImageLoader(self.train_images_names, opts)
 
-        self.images = self.mngr.train_images_names
-        self.batch_size = batch_size
+
+class ImageLoader(tf.keras.utils.Sequence):
+    def __init__(self, images, opts):
+        self.batch_size = opts.get("batch_size")
+        self.hr_shape = opts.get("hr_shape")
+        self.lr_shape = opts.get("lr_shape")
+        self.images = images
 
     def __len__(self):
         return math.ceil(len(self.images) / (len(self.images) / self.batch_size))
+
+    def load_image(self, image_path):
+        image = Image.open(image_path)
+        image = image.convert("RGB")
+        return image
+
+    def augment_base(self, image):
+
+        if np.random.uniform() < 0.5:
+            image = ImageOps.mirror(image)
+
+        if np.random.uniform() < 0.5:
+            image = ImageOps.flip(image)
+
+        return image
+
+    def process_base(self, image_path):
+        img = self.load_image(image_path)
+        img = self.augment_base(img)
+        return img
+
+    def resampling(self, image, shape):
+        return image.resize(shape, resample=Image.BICUBIC)
+
+    def convert_to_array(self, image):
+        image = np.array(image).astype(np.float32)
+        check_pixels(image)
+        return image
+
+    def process_x(self, image):
+        # if np.random.uniform() < 0.5:
+        #     bright_enhancer = ImageEnhance.Brightness(image)
+        #     factor = np.random.uniform(0.5, 1.5)
+        #     image = bright_enhancer.enhance(factor)
+
+        # # Faz um ajuste randômico no contraste da imagem
+        # if np.random.uniform() < 0.5:
+        #     contrast_enhancer = ImageEnhance.Contrast(image)
+        #     factor = np.random.uniform(0.5, 2.5)
+        #     image = contrast_enhancer.enhance(factor)
+
+        image = self.resampling(image, self.lr_shape)
+        image = self.convert_to_array(image)
+        image = normalize(image)
+
+        return image
+
+    def process_y(self, image):
+        image = self.resampling(image, self.hr_shape)
+        image = self.convert_to_array(image)
+        image = normalize(image)
+
+        return image
 
     def __getitem__(self, idx):
         batch_x = self._get_x_batch(idx)
@@ -338,72 +355,41 @@ class ImageSequence(tf.keras.utils.Sequence):
 
     def _get_image_batch(self, idx):
         imgs = self.images[idx * self.batch_size : (idx + 1) * self.batch_size]
-        imgs = [self.mngr.load_image(img) for img in imgs]
-        imgs = [self.mngr.augment_base(img) for img in imgs]
+        imgs = [self.process_base(img) for img in imgs]
         return imgs
 
     def _get_x_batch(self, idx):
         x = self._get_image_batch(idx)
-        x = [self.mngr.augment_x(img) for img in x]
-        x = [self.mngr.resampling(img, self.mngr.lr_shape) for img in x]
-        x = [self.mngr.process_image(img) for img in x]
-        x = [self.mngr.normalize(img) for img in x]
+        x = [self.process_x(img) for img in x]
         x = tf.cast(x, dtype=tf.float32)
         return x
 
     def _get_y_batch(self, idx):
         y = self._get_image_batch(idx)
-        y = [self.mngr.resampling(img, self.mngr.hr_shape) for img in y]
-        y = [self.mngr.process_image(img) for img in y]
-        y = [self.mngr.normalize(img) for img in y]
+        y = [self.process_y(img) for img in y]
         y = tf.cast(y, dtype=tf.float32)
         return y
 
 
-class CNNImageSequence(ImageSequence):
-    def _get_x_batch(self, idx):
-        x = self._get_image_batch(idx)
-        x = [self.mngr.augment_x(img) for img in x]
-        x = [self.mngr.resampling(img, self.mngr.lr_shape) for img in x]
-        x = [self.mngr.resampling(img, self.mngr.hr_shape) for img in x]
-        x = [self.mngr.process_image(img) for img in x]
-        x = tf.cast(x, dtype=tf.float32)
-        return x
+class InterpolatedImageLoader(ImageLoader):
+    def process_x(self, image):
+        # if np.random.uniform() < 0.5:
+        #     bright_enhancer = ImageEnhance.Brightness(image)
+        #     factor = np.random.uniform(0.5, 1.5)
+        #     image = bright_enhancer.enhance(factor)
 
+        # # Faz um ajuste randômico no contraste da imagem
+        # if np.random.uniform() < 0.5:
+        #     contrast_enhancer = ImageEnhance.Contrast(image)
+        #     factor = np.random.uniform(0.5, 2.5)
+        #     image = contrast_enhancer.enhance(factor)
 
-def get_image_dataset(images_manager, batch_size):
-    images_manager
-    images_dataset = tf.data.Dataset.list_files("../datasets/DIV2K_train_HR/*.*")
+        image = self.resampling(image, self.lr_shape)
+        image = self.resampling(image, self.hr_shape)
+        image = self.convert_to_array(image)
+        image = normalize(image)
 
-    def process_path(img_path):
-        img = tf.io.read_file(img_path)
-        img = tf.io.decode_png(img, channels=3)
-        # img = img.numpy()
-        # img = images_manager.augment_base(img)
-
-        # img = images_manager.augment_x(img)
-
-        # x_images = images_manager.resampling(img, images_manager.lr_shape)
-        # y_images = images_manager.resampling(img, images_manager.hr_shape)
-        x_images = tf.image.resize(img, images_manager.lr_shape)
-        y_images = tf.image.resize(img, images_manager.hr_shape)
-
-        return x_images, y_images
-
-    images_dataset = images_dataset.map(
-        process_path, num_parallel_calls=tf.data.AUTOTUNE
-    )
-
-    def configure_for_performance(ds):
-        ds = ds.cache()
-        ds = ds.shuffle(buffer_size=1000)
-        ds = ds.batch(batch_size)
-        ds = ds.prefetch(buffer_size=tf.data.AUTOTUNE)
-        return ds
-
-    images_dataset = configure_for_performance(images_dataset)
-
-    return images_dataset
+        return image
 
 
 def run_interpolations(dataset_info, img_shapes):

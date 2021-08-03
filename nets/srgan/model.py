@@ -4,8 +4,6 @@ import numpy as np
 
 keras = tf.keras
 
-from data_manager import ImagesManager, ImageSequence
-
 from nets.srgan.discriminator import build_discriminator
 from nets.srgan.generator import build_generator
 from losses import build_perceptual_vgg
@@ -117,7 +115,7 @@ class SRGAN(keras.Model):
             ) - np.random.uniform(0, 0.1)
             y_fake = tf.zeros_like(
                 y_pred_disc_fake, dtype=tf.float32
-            ) + np.random.uniform(0, 0.1)
+            ) + np.random.uniform(0, 0.3)
 
             real_loss = self.gan_loss(y_real, y_pred_disc_real)
             fake_loss = self.gan_loss(y_fake, y_pred_disc_fake)

@@ -3,6 +3,8 @@ import numpy as np
 
 keras = tf.keras
 
+from utils import must_finish_with_bar
+
 from registry import CALLBACK_REGISTRY
 
 
@@ -27,6 +29,7 @@ def per_epoch_generation_callback(opts, general_opts=None):
 def model_checkpoint_callback(opts, general_opts):
     monitor = opts.get("monitor")
     checkpoint_filepath = general_opts.get("checkpoint_path")
+    checkpoint_filepath = must_finish_with_bar(checkpoint_filepath)
 
     return keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_filepath,
