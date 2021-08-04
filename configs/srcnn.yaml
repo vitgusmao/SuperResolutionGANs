@@ -1,7 +1,9 @@
 net: "srcnn"
 type: "cnn"
-epochs: 500
+epochs: 100
 batch_size: 1
+save_steps: 1000
+gen_steps: 1
 
 images:
   gt_size: 256
@@ -9,18 +11,18 @@ images:
   scale: 4
 
 train:
-  lr: 1e-4
-  lr_steps: [50000, 100000, 200000, 300000]
-  lr_rate: 0.5
+  lr: !!float 1e-4
   num_filters: 64
+  criterion: "l1"
+  loss_weight: 1.0
 
 datasets:
-train_datasets:
-  img_align_celeba:
-    path: "../datasets/img_align_celeba/"
+  train_datasets:
+    img_align_celeba:
+      path: "../datasets/img_align_celeba/"
 
-test_datasets:
-  img_align_celeba:
-    path: "../datasets/img_align_celeba/"
+  test_datasets:
+    img_align_celeba:
+      path: "../datasets/img_align_celeba/"
 
-test_size: 10
+  test_size: 10

@@ -1,8 +1,9 @@
-net: "psnr_pretrain"
-epochs: 1050
+net: "vdsr"
+type: "cnn"
+epochs: 100
 batch_size: 1
 save_steps: 1000
-gen_steps: 50
+gen_steps: 1
 
 images:
   gt_size: 256
@@ -10,15 +11,10 @@ images:
   scale: 4
 
 train:
-  adam_beta1: 0.9
-  adam_beta2: 0.99
-  lr: !!float 2e-4
-  lr_steps: [200000, 400000, 600000, 800000]
-  lr_rate: 0.5
-  pixel_criterion: "l1"
-  pixel_weight: 1.0
+  lr: !!float 1e-4
   num_filters: 64
-  num_blocks: 16
+  criterion: "l1"
+  loss_weight: 1.0
 
 datasets:
   train_datasets:
