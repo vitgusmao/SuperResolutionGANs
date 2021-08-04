@@ -1,98 +1,100 @@
-from vgg_net import build_vgg
-from tensorflow.keras import losses
-from keras import backend as K
-import ipdb
+import tensorflow as tf
+from tensorflow.keras.applications.vgg19 import preprocess_input, VGG19
 
 from registry import LOSS_REGISTRY
 
 
-@LOSS_REGISTRY.register()
-def mae(y_true, y_pred):
-    loss = losses.MeanAbsoluteError(reduction=losses.Reduction.SUM_OVER_BATCH_SIZE)
-    return loss(y_true, y_pred)
+def PixelLoss(criterion="l1"):
+    """pixel loss"""
+    if criterion == "l1":
+        return tf.keras.losses.MeanAbsoluteError()
+    elif criterion == "l2":
+        return tf.keras.losses.MeanSquaredError()
+    else:
+        raise NotImplementedError("Loss type {} is not recognized.".format(criterion))
 
 
-@LOSS_REGISTRY.register()
-def build_perceptual_vgg(input_shape, layer=None, full_net=False):
-    vgg = build_vgg(input_shape, layer=layer, full_net=full_net)
+def ContentLoss(criterion="l1", output_layer=54, before_act=True):
+    """content loss"""
+    if criterion == "l1":
+        loss_func = tf.keras.losses.MeanAbsoluteError()
+    elif criterion == "l2":
+        loss_func = tf.keras.losses.MeanSquaredError()
+    else:
+        raise NotImplementedError(f"Loss type {criterion} is not recognized.")
+    vgg = VGG19(input_shape=(None, None, 3), include_top=False)
 
-    def perceptual_loss(y_true, y_pred):
-        """O loss perceptível é baseado no loss l1 feito sobre as features extraidas do modelo
-            de identificação de imagem vgg19 pré treinado sobre a base imagenet
-        Args:
-            y_true (tf.Tensor): Ground-truth tensor with shape (batch_size, height, width, channels).
-            y_pred (tf.Tensor): Input tensor with shape (batch_size, height, width, channels).
+    if output_layer == 22:  # Low level feature
+        pick_layer = 5
+    elif output_layer == 54:  # Hight level feature
+        pick_layer = 20
+    else:
+        raise NotImplementedError(f"VGG output layer {criterion} is not recognized.")
 
-        Returns:
-            tf.Tensor: Forward results.
-        """
+    if before_act:
+        vgg.layers[pick_layer].activation = None
 
-        # Exatrai as features pelo vgg19
-        y_pred_features = vgg(y_pred)
-        y_true_features = vgg(y_true)
+    fea_extrator = tf.keras.Model(vgg.input, vgg.layers[pick_layer].output)
 
-        return mae(y_pred_features, y_true_features)
+    @tf.function
+    def content_loss(hr, sr):
+        # the input scale range is [0, 1] (vgg is [0, 255]).
+        # 12.75 is rescale factor for vgg featuremaps.
+        preprocess_sr = preprocess_input(sr * 255.0) / 12.75
+        preprocess_hr = preprocess_input(hr * 255.0) / 12.75
+        sr_features = fea_extrator(preprocess_sr)
+        hr_features = fea_extrator(preprocess_hr)
 
-    return perceptual_loss
+        return loss_func(hr_features, sr_features)
 
-
-def _gram_mat(x):
-    """Calculate Gram matrix.
-
-    Args:
-        x (torch.Tensor): Tensor with shape of (n, c, h, w).
-
-    Returns:
-        torch.Tensor: Gram matrix.
-    """
-    n, c, h, w = x.size()
-    features = x.view(n, c, w * h)
-    features_t = features.transpose(1, 2)
-    gram = features.bmm(features_t) / (c * h * w)
-
-    return gram
+    return content_loss
 
 
-def build_style_loss(input_shape, layers, full_net=False):
-    """
-    Args:
-        y_true (Tensor): Ground-truth tensor with shape (n, c, h, w).
-        y_pred (Tensor): Input tensor with shape (n, c, h, w).
+def DiscriminatorLoss(gan_type="ragan"):
+    """discriminator loss"""
+    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+    sigma = tf.sigmoid
 
-    Returns:
-        Tensor: Forward results.
-    """
-    style_weight = 1.0
-    criterion = "l1"
+    def discriminator_loss_ragan(hr, sr):
+        return 0.5 * (
+            cross_entropy(tf.ones_like(hr), sigma(hr - tf.reduce_mean(sr)))
+            + cross_entropy(tf.zeros_like(sr), sigma(sr - tf.reduce_mean(hr)))
+        )
 
-    vgg = build_vgg(input_shape, layers, full_net)
+    def discriminator_loss(hr, sr):
+        real_loss = cross_entropy(tf.ones_like(hr), sigma(hr))
+        fake_loss = cross_entropy(tf.zeros_like(sr), sigma(sr))
+        return real_loss + fake_loss
 
-    def style_loss(y_true, y_pred):
-
-        # extract vgg features
-        x_features = vgg(y_pred)
-        gt_features = vgg(y_true)
-
-        # calculate style loss
-        if style_weight > 0:
-            style_loss = 0
-            for k in x_features.keys():
-                style_loss += (
-                    criterion(_gram_mat(x_features[k]), _gram_mat(gt_features[k]))
-                    * layer_weights[k]
-                )
-
-            style_loss *= style_weight
-
-        else:
-            style_loss = None
-
-        return style_loss
-
-    return style_loss
+    if gan_type == "ragan":
+        return discriminator_loss_ragan
+    elif gan_type == "gan":
+        return discriminator_loss
+    else:
+        raise NotImplementedError(
+            "Discriminator loss type {} is not recognized.".format(gan_type)
+        )
 
 
-@LOSS_REGISTRY.register()
-def gan_loss(y_true, y_pred):
-    loss = losses.BinaryCrossentropy()
-    return loss(y_true, y_pred)
+def GeneratorLoss(gan_type="ragan"):
+    """generator loss"""
+    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+    sigma = tf.sigmoid
+
+    def generator_loss_ragan(hr, sr):
+        return 0.5 * (
+            cross_entropy(tf.ones_like(sr), sigma(sr - tf.reduce_mean(hr)))
+            + cross_entropy(tf.zeros_like(hr), sigma(hr - tf.reduce_mean(sr)))
+        )
+
+    def generator_loss(hr, sr):
+        return cross_entropy(tf.ones_like(sr), sigma(sr))
+
+    if gan_type == "ragan":
+        return generator_loss_ragan
+    elif gan_type == "gan":
+        return generator_loss
+    else:
+        raise NotImplementedError(
+            "Generator loss type {} is not recognized.".format(gan_type)
+        )

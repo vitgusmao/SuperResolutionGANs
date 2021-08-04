@@ -18,44 +18,49 @@ from utils import (
 
 
 class ImagesManager:
-    def __init__(self, opts):
-        img_info = opts.get("images")
+    def __init__(self, config):
+        img_info = config["images"]
 
-        hr_size = img_info.get("hr_size")
-        lr_size = img_info.get("lr_size")
+        gt_size = img_info["gt_size"]
+        lr_size = int(gt_size / img_info["scale"])
         self.lr_shape = (lr_size, lr_size)
-        self.hr_shape = (hr_size, hr_size)
+        self.hr_shape = (gt_size, gt_size)
 
-        datasets_info = opts.get("datasets")
+        datasets_info = config["datasets"]
 
-        train_dataset = datasets_info.get("train")
-        self.train_dataset_name = train_dataset.get("name")
-        self.train_dataset_dir = must_finish_with_bar(train_dataset.get("dir"))
+        train_datasets = datasets_info["train_datasets"]
+        self.train_dataset_names = train_datasets.keys()
+        self.train_dataset_paths = [
+            must_finish_with_bar(items["path"]) for items in train_datasets.values()
+        ]
 
-        test_dataset = datasets_info.get("test")
-        self.test_dataset_name = test_dataset.get("name")
-        self.test_dataset_dir = must_finish_with_bar(test_dataset.get("dir"))
-        self.test_size = test_dataset.get("size")
+        test_datasets = datasets_info["test_datasets"]
+        self.test_dataset_names = test_datasets.keys()
+        self.test_dataset_paths = [
+            must_finish_with_bar(items["path"]) for items in test_datasets.values()
+        ]
+        self.test_size = datasets_info["test_size"]
 
-        self.batch_size = opts.get("batch_size")
-        self.epochs = opts.get("epochs")
+        self.batch_size = config["batch_size"]
+        self.epochs = config["epochs"]
 
-        self.net_name = opts.get("net")
-        self.base_output_dir = "results/"
-        self.train_monitor_log = (
-            f"{self.base_output_dir}{self.train_dataset_name}/{self.net_name}/"
-        )
+        self.net_name = config["net"]
+        self.base_output_path = "results/"
+        self.train_monitor_paths = [
+            f"{self.base_output_path}{dataset}/{self.net_name}/"
+            for dataset in self.train_dataset_names
+        ]
         self.format = "png"
 
         # Listando os nomes de todos os arquivos no diretório do dataset de treino
-        self.train_images_names = glob.glob("{}*.*".format(self.train_dataset_dir))
-        np.random.shuffle(self.train_images_names)
+        self.train_images_names = [
+            glob.glob("{}*.*".format(path)) for path in self.train_dataset_paths
+        ]
 
         # Listando os nomes de todos os arquivos no diretório do dataset de treino
-        self.test_images_names = glob.glob("{}*.*".format(self.test_dataset_dir))[
-            : self.test_size
-        ]
-        np.random.shuffle(self.test_images_names)
+        self.test_images_names = [
+            glob.glob("{}*.*".format(path)) for path in self.test_dataset_paths
+        ][: self.test_size]
 
     def process_image(self, image):
         image = np.array(image).astype(np.float32)
@@ -67,11 +72,11 @@ class ImagesManager:
         image = image.convert("RGB")
         return image
 
-    def load_image_batch(self, batch_size, is_test=False):
+    def load_image_batch(self, batch_size, images_paths, is_test=False):
         images_batch = []
         for i in range(batch_size):
             if is_test:
-                image_name = self.test_images_names[i]
+                image_name = images_paths[i]
 
                 images_batch.append(self.load_image(image_name))
 
@@ -105,8 +110,8 @@ class ImagesManager:
 
         return image
 
-    def get_images(self, batch_size, is_test=False):
-        images = self.load_image_batch(batch_size, is_test)
+    def get_images(self, batch_size, images_path, is_test=False):
+        images = self.load_image_batch(batch_size, images_path, is_test)
 
         lr_images = []
         hr_images = []
@@ -166,15 +171,10 @@ class ImagesManager:
 
     def unprocess_image(self, image, generated=False):
         image = np.array(image)
-        # image = np.clip(image, 0, 255)
-
-        # Se for uma imagem gerada, fazer uma correção de gamma
-        if generated:
-            image = 255 * ((image / 255) ** (2.2))
         image = image.astype(np.uint8)
         check_pixels(image)
-        pil_image = Image.fromarray(image, "RGB")
 
+        pil_image = Image.fromarray(image, "RGB")
         return pil_image
 
     def rebuild_images(self, images, generated=False):
@@ -189,23 +189,27 @@ class ImagesManager:
         epoch,
         batch_size,
     ):
-        images_names = f"{self.train_monitor_log}test_"
+        for monitor_path, images_path in zip(
+            self.train_monitor_paths, self.test_images_names
+        ):
 
-        _, lr_imgs = self.get_images(batch_size, is_test=True)
+            images_names = f"{monitor_path}test_"
 
-        hr_fakes = generator_net(lr_imgs, training=False)
+            _, lr_imgs = self.get_images(batch_size, images_path, is_test=True)
 
-        hr_fakes = self.rebuild_images(hr_fakes, generated=True)
+            hr_fakes = generator_net(lr_imgs, training=False)
 
-        if not self.epochs:
-            raise Exception("missing epochs")
+            hr_fakes = self.rebuild_images(hr_fakes, generated=True)
 
-        epoch = str(epoch)
-        epoch = epoch.zfill(len(str(self.epochs)))
+            if not self.epochs:
+                raise Exception("missing epochs")
 
-        for index, hr_gen in enumerate(hr_fakes):
-            image_path = images_names + f"{index}/{epoch}_generated.jpg"
-            hr_gen.save(image_path)
+            epoch = str(epoch)
+            epoch = epoch.zfill(len(str(self.epochs)))
+
+            for index, hr_gen in enumerate(hr_fakes):
+                image_path = images_names + f"{index}/{epoch}.jpg"
+                hr_gen.save(image_path)
 
     def generate_and_save_images_cnn(
         self,
@@ -213,23 +217,24 @@ class ImagesManager:
         epoch,
         batch_size,
     ):
-        images_names = f"{self.train_monitor_log}test_"
+        for monitor_path in self.train_monitor_paths:
+            images_names = f"{monitor_path}test_"
 
-        _, lr_imgs = self.get_images_cnn(batch_size, is_test=True)
+            _, lr_imgs = self.get_images_cnn(batch_size, is_test=True)
 
-        hr_fakes = generator_net(lr_imgs, training=False)
+            hr_fakes = generator_net(lr_imgs, training=False)
 
-        hr_fakes = self.rebuild_images(hr_fakes, True)
+            hr_fakes = self.rebuild_images(hr_fakes, True)
 
-        if not self.epochs:
-            raise Exception("missing epochs")
+            if not self.epochs:
+                raise Exception("missing epochs")
 
-        epoch = str(epoch)
-        epoch = epoch.zfill(len(str(self.epochs)))
+            epoch = str(epoch)
+            epoch = epoch.zfill(len(str(self.epochs)))
 
-        for index, hr_gen in enumerate(hr_fakes):
-            image_path = images_names + f"{index}/{epoch}_generated.jpg"
-            hr_gen.save(image_path)
+            for index, hr_gen in enumerate(hr_fakes):
+                image_path = images_names + f"{index}/{epoch}_generated.jpg"
+                hr_gen.save(image_path)
 
     def sample_interpolation(self, interpolation):
 
@@ -244,35 +249,38 @@ class ImagesManager:
 
         for index, hr_gen in enumerate(hr_interpolated):
             name = str(index).zfill(len(str(len(hr_interpolated))))
-            image_path = f"{self.train_monitor_log}{name}_generated.{self.format}"
+            image_path = f"{self.train_monitor_path}{name}_generated.{self.format}"
             hr_gen.save(image_path)
 
     def initialize_dirs(self, testing_batch_size, total_epochs, originals=True):
-        try:
-            os.makedirs(self.train_monitor_log)
-        except FileExistsError:
-            shutil.rmtree(self.train_monitor_log, ignore_errors=True)
-            os.makedirs(self.train_monitor_log)
+        for monitor_path, images_path in zip(
+            self.train_monitor_paths, self.test_images_names
+        ):
+            try:
+                os.makedirs(monitor_path)
+            except FileExistsError:
+                shutil.rmtree(monitor_path, ignore_errors=True)
+                os.makedirs(monitor_path)
 
-        self.epochs = total_epochs
-        imgs = self.load_image_batch(testing_batch_size, is_test=True)
-        images_dir = f"{self.train_monitor_log}test_"
+            self.epochs = total_epochs
+            imgs = self.load_image_batch(testing_batch_size, images_path, is_test=True)
+            output_path = f"{monitor_path}test_"
 
-        for idx, img in enumerate(imgs):
-            sample_dir = images_dir + f"{idx}/"
-            os.makedirs(sample_dir, exist_ok=True)
+            for idx, img in enumerate(imgs):
+                sample_path = output_path + f"{idx}/"
+                os.makedirs(sample_path, exist_ok=True)
 
-            if originals:
-                hr_path = sample_dir + f"high_resolution.{self.format}"
-                lr_path = sample_dir + f"low_resolution.{self.format}"
+                if originals:
+                    hr_path = sample_path + f"high_resolution.{self.format}"
+                    lr_path = sample_path + f"low_resolution.{self.format}"
 
-                hr_img = self.resampling(img, self.hr_shape)
-                hr_img = self.unprocess_image(hr_img)
-                hr_img.save(hr_path)
+                    hr_img = self.resampling(img, self.hr_shape)
+                    hr_img = self.unprocess_image(hr_img)
+                    hr_img.save(hr_path)
 
-                lr_img = self.resampling(img, self.lr_shape)
-                lr_img = self.unprocess_image(lr_img)
-                lr_img.save(lr_path)
+                    lr_img = self.resampling(img, self.lr_shape)
+                    lr_img = self.unprocess_image(lr_img)
+                    lr_img.save(lr_path)
 
     def get_dataset(self):
         opts = {
@@ -399,16 +407,96 @@ def run_interpolations(dataset_info, img_shapes):
     hr_shape = img_shapes.get("hr_shape")
     reshape_size = hr_shape[0]
 
-    dataset_dir = dataset_info.get("dataset_dir")
+    dataset_path = dataset_info.get("dataset_path")
     dataset_name = dataset_info.get("dataset_name")
 
     methods = ["nearest", "linear", "area", "cubic"]
 
     for method in methods:
         image_manager = ImagesManager(
-            dataset_dir, dataset_name, method, hr_img_shape, lr_img_shape
+            dataset_path, dataset_name, method, hr_img_shape, lr_img_shape
         )
 
         seq = iaa.Sequential([iaa.Resize(reshape_size, interpolation=method)])
 
         image_manager.sample_interpolation(seq)
+
+
+def load_images_datasets(
+    datasets_paths,
+    batch_size,
+    shuffle=True,
+    buffer_size=10240,
+):
+    dataset = tf.data.Dataset.list_files(f"{datasets_paths[0]}*.*")
+    for path in datasets_paths[1:]:
+        dataset.concatenate(tf.data.Dataset.list_files(f"{path}*.*"))
+
+    dataset = dataset.repeat()
+    if shuffle:
+        dataset = dataset.shuffle(buffer_size=buffer_size)
+
+    # dataset = raw_dataset.map(parser, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+
+    dataset = dataset.batch(batch_size, drop_remainder=True)
+    dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    return dataset
+
+
+def load_datasets(config, key, batch_size, shuffle=True, buffer_size=10240):
+    datasets_config = config[key]
+    datasets_paths = [items["path"] for items in datasets_config.values()]
+
+    dataset = load_images_datasets(
+        datasets_paths=datasets_paths,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        buffer_size=buffer_size,
+    )
+    return dataset
+
+
+def define_image_process(gt_size, scale):
+    x_size = int(gt_size / scale)
+    x_shape = (x_size, x_size)
+    y_shape = (gt_size, gt_size)
+
+    def process(images_paths):
+        x_images, y_images = [], []
+
+        for image_path in images_paths.numpy():
+            image = Image.open(image_path)
+            image = image.convert("RGB")
+
+            if np.random.uniform() < 0.5:
+                image = ImageOps.mirror(image)
+
+            if np.random.uniform() < 0.5:
+                image = ImageOps.flip(image)
+
+            # if np.random.uniform() < 0.5:
+            #     bright_enhancer = ImageEnhance.Brightness(image)
+            #     factor = np.random.uniform(0.5, 1.5)
+            #     x_image = bright_enhancer.enhance(factor)
+
+            # # Faz um ajuste randômico no contraste da imagem
+            # if np.random.uniform() < 0.5:
+            #     contrast_enhancer = ImageEnhance.Contrast(x_image)
+            #     factor = np.random.uniform(0.5, 2.5)
+            #     x_image = contrast_enhancer.enhance(factor)
+
+            x_image = image.resize(x_shape, resample=Image.BICUBIC)
+            y_image = image.resize(y_shape, resample=Image.BICUBIC)
+
+            x_image = np.array(x_image).astype(np.float32)
+            y_image = np.array(y_image).astype(np.float32)
+
+            x_image = normalize(x_image)
+            y_image = normalize(y_image)
+
+            x_images.append(x_image)
+            y_images.append(y_image)
+
+        return tf.cast(x_images, dtype=tf.float32), tf.cast(y_images, dtype=tf.float32)
+
+    return process

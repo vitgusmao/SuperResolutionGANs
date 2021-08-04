@@ -1,302 +1,150 @@
 from keras.engine.input_layer import Input
-from keras.layers import LeakyReLU, Add, Lambda, Concatenate
+from keras.layers import LeakyReLU, Add, Concatenate
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.models import Model
 
 
-def build_residual_dense_block(block_input, filters=64, num_grow_ch=32):
-    x1 = Conv2D(
-        filters=num_grow_ch,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        # name=f"rdb_1_conv_1",
-    )(block_input)
-    x1 = LeakyReLU(alpha=0.2)(x1)
-    res = Concatenate(axis=3)([block_input, x1])
+import functools
+import tensorflow as tf
+from tensorflow.keras import Model
 
-    x2 = Conv2D(
-        filters=num_grow_ch,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        # name=f"rdb_2_conv_2",
-    )(res)
-    x2 = LeakyReLU(alpha=0.2)(x2)
-    res = Concatenate(axis=3)([block_input, x1, x2])
-
-    x3 = Conv2D(
-        filters=num_grow_ch,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        # name=f"rdb_3_conv_3",
-    )(res)
-    x3 = LeakyReLU(alpha=0.2)(x3)
-    res = Concatenate(axis=3)([block_input, x1, x2, x3])
-
-    x4 = Conv2D(
-        filters=num_grow_ch,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        # name=f"rdb_4_conv_4",
-    )(res)
-    x4 = LeakyReLU(alpha=0.2)(x4)
-    res = Concatenate(axis=3)([block_input, x1, x2, x3, x4])
-
-    x5 = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        # name=f"rd_block_{block}_conv_5",
-    )(res)
-
-    output = x5 * 0.2
-    output = Add()([output, block_input])
-
-    return output
+# from tensorflow.keras.layers import Dense, Flatten, Input, Conv2D, LeakyReLU
 
 
-def build_residual_in_residual_dense_block(block_input, filters, num_grow_ch=32):
-    x = block_input
-    for _ in range(3):
-        x = build_residual_dense_block(x, filters, num_grow_ch)
-
-    output = x * 0.2
-    output = Add()([output, block_input])
-
-    return output
+def _regularizer(weights_decay=5e-4):
+    return tf.keras.regularizers.l2(weights_decay)
 
 
-def build_rrdbn(input_shape, filters=64, num_blocks=23, num_grow_ch=32):
-
-    net_input = Input(input_shape)
-
-    conv_first = Conv2D(filters, kernel_size=3, strides=1, padding="same")(net_input)
-
-    x = conv_first
-    for _ in range(num_blocks):
-        x = build_residual_in_residual_dense_block(
-            x, filters=filters, num_grow_ch=num_grow_ch
-        )
-
-    conv_body = Conv2D(filters, kernel_size=3, strides=1, padding="same")(x)
-
-    x = Add()([conv_first, conv_body])
-
-    # upsample
-    x = UpSampling2D(size=2, interpolation="nearest")(x)
-    x = Conv2D(filters, kernel_size=3, strides=1, padding="same")(x)
-    x = LeakyReLU(alpha=0.2)(x)
-
-    x = UpSampling2D(size=2, interpolation="nearest")(x)
-    x = Conv2D(filters, kernel_size=3, strides=1, padding="same")(x)
-    x = LeakyReLU(alpha=0.2)(x)
-
-    conv_hr = Conv2D(filters, kernel_size=3, strides=1, padding="same")(x)
-    output = Conv2D(3, kernel_size=3, strides=1, padding="same", activation="tanh")(
-        conv_hr
+def _kernel_init(scale=1.0, seed=None):
+    """He normal initializer with scale."""
+    scale = 2.0 * scale
+    return tf.keras.initializers.VarianceScaling(
+        scale=scale, mode="fan_in", distribution="truncated_normal", seed=seed
     )
 
-    model = Model(inputs=net_input, outputs=output, name="RRDBNet")
-    print(model.summary())
 
-    return model
-
-
-def build_rrdbnet(input_shape, filters=64):
-    """
-    Net data format (batch_size, height, width, channels)
+class BatchNormalization(tf.keras.layers.BatchNormalization):
+    """Make trainable=False freeze BN for real (the og version is sad).
+    ref: https://github.com/zzh8829/yolov3-tf2
     """
 
-    lrelu = LeakyReLU(alpha=0.2)
+    def __init__(
+        self,
+        axis=-1,
+        momentum=0.9,
+        epsilon=1e-5,
+        center=True,
+        scale=True,
+        name=None,
+        **kwargs
+    ):
+        super(BatchNormalization, self).__init__(
+            axis=axis,
+            momentum=momentum,
+            epsilon=epsilon,
+            center=center,
+            scale=scale,
+            name=name,
+            **kwargs
+        )
 
-    net_input = Input(input_shape)
+    def call(self, x, training=False):
+        if training is None:
+            training = tf.constant(False)
+        training = tf.logical_and(training, self.trainable)
+        return super().call(x, training)
 
-    first_conv = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        name="first_conv",
-    )(net_input)
 
-    block = 1
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_1",
-    )(first_conv)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_2",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_3",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_4",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_5",
-    )(x)
+class ResDenseBlock_5C(tf.keras.layers.Layer):
+    """Residual Dense Block"""
 
-    block += 1
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_1",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_2",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_3",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_4",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_5",
-    )(x)
+    def __init__(self, nf=64, gc=32, res_beta=0.2, wd=0.0, name="RDB5C", **kwargs):
+        super(ResDenseBlock_5C, self).__init__(name=name, **kwargs)
+        # gc: growth channel, i.e. intermediate channels
+        self.res_beta = res_beta
+        lrelu_f = functools.partial(LeakyReLU, alpha=0.2)
+        _Conv2DLayer = functools.partial(
+            Conv2D,
+            kernel_size=3,
+            padding="same",
+            kernel_initializer=_kernel_init(0.1),
+            bias_initializer="zeros",
+            kernel_regularizer=_regularizer(wd),
+        )
+        self.conv1 = _Conv2DLayer(filters=gc, activation=lrelu_f())
+        self.conv2 = _Conv2DLayer(filters=gc, activation=lrelu_f())
+        self.conv3 = _Conv2DLayer(filters=gc, activation=lrelu_f())
+        self.conv4 = _Conv2DLayer(filters=gc, activation=lrelu_f())
+        self.conv5 = _Conv2DLayer(filters=nf, activation=lrelu_f())
 
-    block += 1
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_1",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_2",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_3",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_4",
-    )(x)
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name=f"rd_block_{block}_conv_5",
-    )(x)
+    def call(self, x):
+        x1 = self.conv1(x)
+        x2 = self.conv2(tf.concat([x, x1], 3))
+        x3 = self.conv3(tf.concat([x, x1, x2], 3))
+        x4 = self.conv4(tf.concat([x, x1, x2, x3], 3))
+        x5 = self.conv5(tf.concat([x, x1, x2, x3, x4], 3))
+        return x5 * self.res_beta + x
 
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name="body_conv",
-    )(x)
-    x = Add()([first_conv, x])
 
-    # upsample
-    x = UpSampling2D(size=2, interpolation="nearest", name="up_sampling_1")(x)
-    x = Conv2D(
-        filters=filters * 2,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name="conv_up_sampling_1",
-    )(x)
-    x = UpSampling2D(size=2, interpolation="nearest", name="up_sampling_2")(x)
-    x = Conv2D(
-        filters=filters * 4,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name="conv_up_sampling_2",
-    )(x)
+class ResInResDenseBlock(tf.keras.layers.Layer):
+    """Residual in Residual Dense Block"""
 
-    x = Conv2D(
-        filters=filters,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation=lrelu,
-        name="conv_hr",
-    )(x)
-    output = Conv2D(
-        filters=3,
-        kernel_size=3,
-        strides=1,
-        padding="same",
-        activation="tanh",
-        name="last_conv",
-    )(x)
+    def __init__(self, nf=64, gc=32, res_beta=0.2, wd=0.0, name="RRDB", **kwargs):
+        super(ResInResDenseBlock, self).__init__(name=name, **kwargs)
+        self.res_beta = res_beta
+        self.rdb_1 = ResDenseBlock_5C(nf, gc, res_beta=res_beta, wd=wd)
+        self.rdb_2 = ResDenseBlock_5C(nf, gc, res_beta=res_beta, wd=wd)
+        self.rdb_3 = ResDenseBlock_5C(nf, gc, res_beta=res_beta, wd=wd)
 
-    model = Model(inputs=net_input, outputs=output, name="RRDBNet")
-    print(model.summary())
+    def call(self, x):
+        out = self.rdb_1(x)
+        out = self.rdb_2(out)
+        out = self.rdb_3(out)
+        return out * self.res_beta + x
+
+
+def RRDB_Model(
+    gt_size, scale, channels, nf=64, nb=16, gc=32, wd=0.0, name="RRDB_model"
+):
+
+    size = int(gt_size / scale)
+
+    lrelu_f = functools.partial(LeakyReLU, alpha=0.2)
+    rrdb_f = functools.partial(ResInResDenseBlock, nf=nf, gc=gc, wd=wd)
+    conv_f = functools.partial(
+        Conv2D,
+        kernel_size=3,
+        padding="same",
+        bias_initializer="zeros",
+        kernel_initializer=_kernel_init(),
+        kernel_regularizer=_regularizer(wd),
+    )
+    rrdb_truck_f = tf.keras.Sequential(
+        [rrdb_f(name="RRDB_{}".format(i)) for i in range(nb)], name="RRDB_trunk"
+    )
+
+    # extraction
+    x = inputs = Input([size, size, channels], name="input_image")
+    fea = conv_f(filters=nf, name="conv_first")(x)
+    fea_rrdb = rrdb_truck_f(fea)
+    trunck = conv_f(filters=nf, name="conv_trunk")(fea_rrdb)
+    fea = fea + trunck
+
+    # upsampling
+    size_fea_h = tf.shape(fea)[1] if size is None else size
+    size_fea_w = tf.shape(fea)[2] if size is None else size
+    fea_resize = tf.image.resize(
+        fea, [size_fea_h * 2, size_fea_w * 2], method="nearest", name="upsample_nn_1"
+    )
+    fea = conv_f(filters=nf, activation=lrelu_f(), name="upconv_1")(fea_resize)
+    fea_resize = tf.image.resize(
+        fea, [size_fea_h * 4, size_fea_w * 4], method="nearest", name="upsample_nn_2"
+    )
+    fea = conv_f(filters=nf, activation=lrelu_f(), name="upconv_2")(fea_resize)
+    fea = conv_f(filters=nf, activation=lrelu_f(), name="conv_hr")(fea)
+    out = conv_f(filters=channels, name="conv_last")(fea)
+
+    model = Model(inputs, out, name=name)
+    model.summary(line_length=80)
 
     return model
