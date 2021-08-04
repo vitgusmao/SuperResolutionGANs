@@ -1,145 +1,168 @@
-import ipdb
-from keras import metrics
 import tensorflow as tf
 from keras.engine.input_layer import Input
 from keras.layers import ReLU, Add
-from keras.layers.convolutional import Conv2D, UpSampling2D
+from keras.layers.convolutional import Conv2D
 from keras.models import Model
 import numpy as np
 
-keras = tf.keras
 
-from data_manager import ImagesManager, CNNImageSequence
-from metrics import image_metrics
+from utils import ProgressBar
+from data_manager import ImagesManager, define_image_process_interpolated, load_datasets
+from registry import MODEL_REGISTRY
 
-class SamplesCallback(keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-
-        if epoch % 20 == 0:
-            self.model.img_m.sample_per_epoch_cnn(self.model.net, epoch, 2)
+from losses import PixelLoss
 
 
-class VDSR(keras.Model):
-    def __init__(self, lr_shape=None, hr_shape=None, image_manager=None):
-        super(VDSR, self).__init__()
-        self.img_m = image_manager
-        self.img_m.initialize_dirs(2, 1000)
-        self.net = self.build_net(hr_shape)
+def VDSR_Model(gt_size, channels=3, filters=64):
+    input_shape = (gt_size, gt_size, channels)
+    net_input = Input(input_shape)
 
-    def build_net(self, input_shape, filters=64):
-        """
-        Net data format (batch_size, height, width, channels)
-        """
+    first_conv = Conv2D(
+        filters=filters,
+        kernel_size=4,
+        kernel_initializer=tf.keras.initializers.random_normal(stddev=np.sqrt(2.0 / 9)),
+        use_bias=True,
+        bias_initializer=tf.keras.initializers.constant(np.zeros((filters,))),
+        strides=1,
+        padding="same",
+    )(net_input)
+    x = ReLU()(first_conv)
 
-        net_input = Input(input_shape)
-
-        first_conv = Conv2D(
+    for i in range(18):
+        x = Conv2D(
             filters=filters,
             kernel_size=4,
-            kernel_initializer=keras.initializers.random_normal(
-                stddev=np.sqrt(2.0 / 9)),
-            use_bias=True,
-            bias_initializer=keras.initializers.constant(np.zeros((filters, ))),
             strides=1,
-            padding='same',
-        )(net_input)
-        x = ReLU()(first_conv)
-
-        for i in range(18):
-            x = Conv2D(
-                filters=filters,
-                kernel_size=4,
-                strides=1,
-                kernel_initializer=keras.initializers.random_normal(
-                    stddev=np.sqrt(2.0 / 9 / filters)),
-                use_bias=True,
-                bias_initializer=keras.initializers.constant(np.zeros((filters, ))),
-                padding='same',
-            )(x)
-            x = ReLU()(x)
-
-        last_conv = Conv2D(
-            filters=3,
-            kernel_size=4,
-            kernel_initializer=keras.initializers.random_normal(
-                stddev=np.sqrt(2.0 / 9 / filters)),
+            kernel_initializer=tf.keras.initializers.random_normal(
+                stddev=np.sqrt(2.0 / 9 / filters)
+            ),
             use_bias=True,
-            bias_initializer=keras.initializers.constant(np.zeros((3, ))),
-            strides=1,
-            activation='tanh',
-            padding='same',
+            bias_initializer=tf.keras.initializers.constant(np.zeros((filters,))),
+            padding="same",
         )(x)
+        x = ReLU()(x)
 
-        output = Add()([net_input, last_conv])
+    last_conv = Conv2D(
+        filters=channels,
+        kernel_size=4,
+        kernel_initializer=tf.keras.initializers.random_normal(
+            stddev=np.sqrt(2.0 / 9 / filters)
+        ),
+        use_bias=True,
+        bias_initializer=tf.keras.initializers.constant(np.zeros((3,))),
+        strides=1,
+        activation="tanh",
+        padding="same",
+    )(x)
 
-        model = Model(inputs=net_input, outputs=output, name='VDSR')
-        print(model.summary())
+    output = Add()([net_input, last_conv])
 
-        return model
+    model = Model(inputs=net_input, outputs=output, name="VDSR")
+    print(model.summary())
 
-    def compile(
-        self,
-        optimizer,
-        metrics
-    ):
-        super(VDSR, self).compile(run_eagerly=True, metrics=metrics)
-        self.optimizer = optimizer
-
-        self.loss_fn = keras.losses.MeanSquaredError()
-
-    def call(self, inputs, training=False, mask=None):
-        return self.net(inputs, training=training, mask=mask)
-
-    def train_step(self, batch_data):
-
-        x_batch, y_batch = batch_data
-
-        with tf.GradientTape(persistent=True) as tape:
-
-            gen_img = self.net(x_batch, training=True)
-
-            loss = self.loss_fn(gen_img, y_batch)
-
-        grads = tape.gradient(loss, self.net.trainable_variables)
-
-        self.optimizer.apply_gradients(zip(grads,
-                                           self.net.trainable_variables))
-
-        return {
-            "loss": loss,
-        }
+    return model
 
 
-def compile_and_train(img_shapes, dataset_info, train_args):
-    hr_img_shape = img_shapes.get('hr_img_shape')
-    lr_img_shape = img_shapes.get('lr_img_shape')
+@MODEL_REGISTRY.register()
+def vdsr(config):
 
-    hr_shape = img_shapes.get('hr_shape')
-    lr_shape = img_shapes.get('lr_shape')
+    image_manager = ImagesManager(config)
+    image_manager.initialize_dirs(2, config["epochs"])
 
-    dataset_dir = dataset_info.get('dataset_dir')
-    dataset_name = dataset_info.get('dataset_name')
+    imgs_config = config["images"]
 
-    batch_size = train_args.get('batch_size')
-    epochs = train_args.get('epochs')
+    train_config = config["train"]
 
-    net_name = 'VDSR'
+    # define network
+    model = VDSR_Model(
+        imgs_config["gt_size"],
+        imgs_config["channels"],
+        train_config["num_filters"],
+    )
 
-    image_manager = ImagesManager(dataset_dir, dataset_name, net_name,
-                                  hr_img_shape, lr_img_shape)
+    # load dataset
+    train_dataset = load_datasets(
+        config["datasets"], "train_datasets", config["batch_size"], shuffle=False
+    )
+    # image_loader = image_manager.get_dataset()
+    process_image = define_image_process_interpolated(
+        imgs_config["gt_size"], imgs_config["scale"]
+    )
 
-    image_sequence = CNNImageSequence(image_manager, 1)
+    # define losses function
+    loss_fn = PixelLoss(criterion=train_config["criterion"])
 
-    # Create enhanced super resolution gan model
-    model = VDSR(hr_shape=hr_shape, image_manager=image_manager)
+    # define optimizer
+    learning_rate = tf.keras.optimizers.schedules.PiecewiseConstantDecay(
+        boundaries=train_config["boundaries"], values=train_config["lr_values"]
+    )
+    optimizer = tf.keras.optimizers.Adam(
+        learning_rate=learning_rate,
+        beta_1=tf.Variable(train_config["adam_beta1"]),
+        beta_2=tf.Variable(train_config["adam_beta2"]),
+    )
 
-    # Compile the model
-    model.compile(
-        optimizer=keras.optimizers.SGD(learning_rate=0.1, momentum=0.9), metrics=image_metrics)
+    # load checkpoint
+    checkpoint_dir = "./checkpoints/" + config["net"]
+    checkpoint = tf.train.Checkpoint(
+        step=tf.Variable(0, name="step"),
+        optimizer=optimizer,
+        model=model,
+    )
+    manager = tf.train.CheckpointManager(
+        checkpoint=checkpoint, directory=checkpoint_dir, max_to_keep=3
+    )
 
-    model.fit(image_sequence,
-                     batch_size=batch_size,
-                     epochs=epochs,
-                    #  use_multiprocessing=True,
-                    #  workers=2,
-                     callbacks=[SamplesCallback()])
+    if manager.latest_checkpoint:
+        ckpt_status = checkpoint.restore(manager.latest_checkpoint)
+        ckpt_status.expect_partial()
+        # ckpt_status.assert_consumed()
+        print(
+            ">> load ckpt from {} at step {}.".format(
+                manager.latest_checkpoint, checkpoint.step.numpy()
+            )
+        )
+    else:
+        print(">> training from scratch.")
+
+    # define training step function
+    @tf.function
+    def train_step(lr, hr):
+        with tf.GradientTape() as tape:
+            lr = tf.cast(lr, tf.float32)
+            hr = tf.cast(hr, tf.float32)
+
+            sr = checkpoint.model(lr, training=True)
+            loss_value = loss_fn(hr, sr)
+
+        gradients = tape.gradient(loss_value, checkpoint.model.trainable_variables)
+        checkpoint.optimizer.apply_gradients(
+            zip(gradients, checkpoint.model.trainable_variables)
+        )
+
+        return loss_value
+
+    # training loop
+    prog_bar = ProgressBar(config["epochs"], checkpoint.step.numpy())
+    remain_steps = max(config["epochs"] - checkpoint.step.numpy(), 0)
+
+    for raw_img in train_dataset.take(remain_steps):
+        lr, hr = process_image(raw_img)
+
+        checkpoint.step.assign_add(1)
+        steps = checkpoint.step.numpy()
+
+        total_loss = train_step(lr, hr)
+
+        prog_bar.update("loss={:.4f}".format(total_loss.numpy()))
+
+        if steps % config["save_steps"] == 0:
+            manager.save()
+            print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
+
+        if steps % config["gen_steps"] == 0:
+            image_manager.generate_and_save_images_cnn(model, steps, 2)
+
+    print(f"\n>> training done for {config['net']}!")
+
+    return model

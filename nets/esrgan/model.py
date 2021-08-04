@@ -1,330 +1,205 @@
 import ipdb
 import tensorflow as tf
-from tensorflow.python.keras.engine import training
 import numpy as np
 
-keras = tf.keras
-
-from losses import build_perceptual_vgg
-from nets.esrgan.discriminator import build_discriminator
-from metrics import psnr, ssim
-from nets.esrgan.rrdbnet import build_rrdbn, build_rrdbnet
 from registry import MODEL_REGISTRY
+from utils import ProgressBar, load_yaml
 
+from metrics import psnr, ssim
+from nets.esrgan.rrdbnet import RRDB_Model
+from nets.esrgan.psnr_model import psnr_pretrain
+from nets.esrgan.discriminator import DiscriminatorVGG128
+from lr_schedule import MultiStepLR
+from losses import GeneratorLoss, DiscriminatorLoss, PixelLoss, ContentLoss
+from data_manager import load_datasets, define_image_process, ImagesManager
 
-class SamplesCallback(keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-
-        if epoch % 5 == 0:
-            self.model.img_m.generate_and_save_images(self.model.gen, epoch, 2)
-
-
-class ESRGAN(keras.Model):
-    def __init__(self, generator, discriminator, image_manager):
-        super(ESRGAN, self).__init__()
-        self.gen = generator
-        self.disc = discriminator
-        self.img_m = image_manager
-
-        self.ema = tf.train.ExponentialMovingAverage(decay=0.9999)
-
-    def compile(self, gen_optimizer, disc_optimizer, gen_metrics=[], disc_metrics=[]):
-        super(ESRGAN, self).compile(run_eagerly=True)
-        self.gen_optimizer = gen_optimizer
-        self.disc_optimizer = disc_optimizer
-
-        self.gan_loss = keras.losses.BinaryCrossentropy()
-        self.pixel_loss = keras.losses.MeanAbsoluteError()
-        vgg_input = (
-            self.gen.output.shape[1],
-            self.gen.output.shape[2],
-            self.gen.output.shape[3],
-        )
-        self.perceptual_loss = build_perceptual_vgg(vgg_input, "block5_conv4")
-
-        self.gen_metrics = gen_metrics
-        self.disc_metrics = disc_metrics
-
-    def call(self, inputs, training=False, mask=None):
-        return self.gen(inputs, training=training, mask=mask)
-
-    def train_step(self, batch_data):
-
-        # x is low res and y is high res
-        x_batch, y_batch = batch_data
-
-        step_output = {}
-        # For Enhanced Super Resolution GAN, we need to calculate
-        # losses for the generator and discriminator.
-        # We will perform the following steps here:
-        #
-        # 1. Pass low res. images through the generator and get the generated high res. images
-        # 2. Pass the generated images in 1) to the discriminator.
-        # 3. Calculate the generators total loss (adverserial)
-        # 4. Calculate the discriminator loss
-        # 5. Update the weights of the generator
-        # 6. Update the weights of the discriminator
-        # 7. Return the losses in a dictionary
-
-        # Train Generator
-        with tf.GradientTape() as gen_tape:
-            y_pred_gen = self.gen(x_batch, training=True)
-
-            y_pred_disc_real = self.disc(y_batch, training=False)
-            y_pred_disc_fake = self.disc(y_pred_gen, training=False)
-
-            y_real = tf.zeros_like(
-                y_pred_disc_real, dtype=tf.float32
-            ) + np.random.uniform(0, 0.08, y_pred_disc_real.shape)
-            real_loss = self.gan_loss(y_real, y_pred_disc_real)
-            y_fake = tf.ones_like(
-                y_pred_disc_real, dtype=tf.float32
-            ) - np.random.uniform(0, 0.08, y_pred_disc_fake.shape)
-            fake_loss = self.gan_loss(y_fake, y_pred_disc_fake)
-
-            # Generator losses
-            gan_loss = ((real_loss + fake_loss) / 2) * 1e-3
-            pixel_loss = self.pixel_loss(y_batch, y_pred_gen) * 1e-5
-            perceptual_loss = self.perceptual_loss(y_batch, y_pred_gen) * 1
-            total_loss = gan_loss + perceptual_loss + pixel_loss
-
-        # Get the gradients for the generator
-        gen_grads = gen_tape.gradient(total_loss, self.gen.trainable_variables)
-
-        # Update the weights of the generator
-        gen_op = self.gen_optimizer.apply_gradients(
-            zip(gen_grads, self.gen.trainable_variables)
-        )
-
-        with tf.control_dependencies([gen_op]):
-            self.ema.apply(self.gen.trainable_variables)
-
-        # Train Discriminator - Real
-        with tf.GradientTape() as disc_tape:
-            y_pred_disc_real = self.disc(y_batch, training=True)
-            y_pred_disc_fake = self.disc(y_pred_gen, training=False)
-
-            # loss
-            y_real = tf.ones_like(
-                y_pred_disc_real, dtype=tf.float32
-            ) - np.random.uniform(0, 0.1, y_pred_disc_real.shape)
-            y_fake = tf.zeros_like(
-                y_pred_disc_fake, dtype=tf.float32
-            ) + np.random.uniform(0, 0.2, y_pred_disc_fake.shape)
-
-            real_loss = self.gan_loss(y_real, y_pred_disc_real)
-            fake_loss = self.gan_loss(y_fake, y_pred_disc_fake)
-            disc_loss = (real_loss + fake_loss) * 0.5
-
-        # Get the gradients for the discriminator
-        disc_grads = disc_tape.gradient(disc_loss, self.disc.trainable_variables)
-
-        # Update the weights of the discriminator
-        self.disc_optimizer.apply_gradients(
-            zip(disc_grads, self.disc.trainable_variables)
-        )
-
-        # Train Discriminator - Fake
-        with tf.GradientTape() as disc_tape:
-            y_pred_disc_real = self.disc(y_batch, training=False)
-            y_pred_disc_fake = self.disc(y_pred_gen, training=True)
-
-            # loss
-            y_real = tf.ones_like(
-                y_pred_disc_real, dtype=tf.float32
-            ) - np.random.uniform(0, 0.1)
-            y_fake = tf.zeros_like(
-                y_pred_disc_fake, dtype=tf.float32
-            ) + np.random.uniform(0, 0.3)
-
-            real_loss = self.gan_loss(y_real, y_pred_disc_real)
-            fake_loss = self.gan_loss(y_fake, y_pred_disc_fake)
-            disc_loss = (real_loss + fake_loss) * 0.5
-
-        # Get the gradients for the discriminator
-        disc_grads = disc_tape.gradient(disc_loss, self.disc.trainable_variables)
-
-        # Update the weights of the discriminator
-        disc_op = self.disc_optimizer.apply_gradients(
-            zip(disc_grads, self.disc.trainable_variables)
-        )
-
-        with tf.control_dependencies([disc_op]):
-            self.ema.apply(self.disc.trainable_variables)
-
-        step_output.update(
-            {m.__name__: m(y_batch, y_pred_gen) for m in self.gen_metrics}
-        )
-        step_output.update(
-            {
-                f"{m.__name__}_real": m(
-                    tf.ones_like(y_pred_disc_real), y_pred_disc_real
-                )
-                for m in self.disc_metrics
-            }
-        )
-        step_output.update(
-            {
-                f"{m.__name__}_fake": m(
-                    tf.zeros_like(y_pred_disc_fake), y_pred_disc_fake
-                )
-                for m in self.disc_metrics
-            }
-        )
-
-        step_output.update(
-            {
-                "gen_loss": total_loss,
-                "disc_loss": disc_loss,
-            }
-        )
-
-        return step_output
-
-    # def train_step(self, batch_data):
-
-    #     # x is low res and y is high res
-    #     x_batch, y_batch = batch_data
-
-    #     # For Enhanced Super Resolution GAN, we need to calculate
-    #     # losses for the generator and discriminator.
-    #     # We will perform the following steps here:
-    #     #
-    #     # 1. Pass low res. images through the generator and get the generated high res. images
-    #     # 2. Pass the generated images in 1) to the discriminator.
-    #     # 3. Calculate the generators total loss (adverserial)
-    #     # 4. Calculate the discriminator loss
-    #     # 5. Update the weights of the generator
-    #     # 6. Update the weights of the discriminator
-    #     # 7. Return the losses in a dictionary
-
-    #     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-
-    #         y_pred_gen = self.gen(x_batch, training=False)
-
-    #         # Train Generator
-    #         y_pred_gen = self.gen(x_batch, training=True)
-    #         y_pred_disc_pred = self.disc(y_pred_gen, training=False)
-
-    #         # Generator losses
-    #         gan_loss = (
-    #             self.gan_loss(tf.ones_like(y_pred_disc_pred), y_pred_disc_pred) * 5e-2
-    #         )
-    #         pixel_loss = self.pixel_loss(y_batch, y_pred_gen) * 1e-2
-    #         perceptual_loss = self.perceptual_loss(y_batch, y_pred_gen) * 1
-
-    #         # Total generator loss
-    #         total_loss = gan_loss + perceptual_loss + pixel_loss
-
-    #         # Train Discriminator
-    #         y_pred_disc_real = self.disc(y_batch, training=True)
-    #         y_pred_disc_pred = self.disc(y_pred_gen, training=True)
-
-    #         # Discriminator loss
-    #         real_loss = self.gan_loss(
-    #             tf.ones_like(y_pred_disc_real, dtype=tf.float32) * 0.9, y_pred_disc_real
-    #         )
-    #         fake_loss = self.gan_loss(
-    #             tf.zeros_like(y_pred_disc_pred, dtype=tf.float32), y_pred_disc_pred
-    #         )
-    #         disc_loss = (real_loss + fake_loss) * 0.5
-
-    #         step_output = {m.__name__: m(y_batch, y_pred_gen) for m in self.gen_metrics}
-
-    #     # Get the gradients for the generator
-    #     gen_grads = gen_tape.gradient(total_loss, self.gen.trainable_variables)
-
-    #     # Get the gradients for the discriminator
-    #     disc_grads = disc_tape.gradient(disc_loss, self.disc.trainable_variables)
-
-    #     # Update the weights of the generator
-    #     gen_op = self.gen_optimizer.apply_gradients(
-    #         zip(gen_grads, self.gen.trainable_variables)
-    #     )
-
-    #     # Update the weights of the discriminator
-    #     disc_op = self.disc_optimizer.apply_gradients(
-    #         zip(disc_grads, self.disc.trainable_variables)
-    #     )
-
-    #     with tf.control_dependencies([gen_op]):
-    #         self.ema.apply(self.gen.trainable_variables)
-
-    #     with tf.control_dependencies([disc_op]):
-    #         self.ema.apply(self.disc.trainable_variables)
-
-    #     step_output.update(
-    #         {
-    #             "gen_loss": total_loss,
-    #             "disc_loss": disc_loss,
-    #         }
-    #     )
-
-    #     return step_output
-
-    # def test_step(self, batch_data):
-    #     # Unpack the data
-    #     x_batch, y_batch = batch_data
-
-    #     y_pred_gen = self.gen(x_batch, training=False)
-
-    #     y_pred_disc_pred = self.disc(y_pred_gen, training=False)
-    #     y_pred_disc_real = self.disc(y_batch, training=False)
-
-    #     # Discriminator loss
-    #     disc_pred_loss = self.gan_loss(
-    #         tf.zeros_like(y_pred_disc_pred), y_pred_disc_pred
-    #     )
-    #     disc_real_loss = self.gan_loss(tf.ones_like(y_pred_disc_real), y_pred_disc_real)
-    #     disc_loss = (disc_real_loss + disc_pred_loss) * 0.5
-
-    #     # Generator loss
-    #     gan_loss = (
-    #         self.gan_loss(tf.ones_like(y_pred_disc_pred), y_pred_disc_pred) * 5e-3
-    #     )
-    #     pixel_loss = self.pixel_loss(y_batch, y_pred_gen) * 1e-2
-    #     perceptual_loss = self.perceptual_loss(y_batch, y_pred_gen) * 1
-
-    #     # Total generator loss
-    #     total_loss = gan_loss + perceptual_loss + pixel_loss
-
-    #     self.compiled_metrics.update_state(y_batch, y_pred_gen)
-
-    #     return {m.name: m.result() for m in self.metrics}
 
 @MODEL_REGISTRY.register()
-def esrgan(opts, image_manager):
-    imgs_opts = opts.get("images")
+def esrgan(config):
 
-    lr_size = imgs_opts.get("lr_size")
-    hr_size = imgs_opts.get("hr_size")
-    channels = imgs_opts.get("channels")
+    image_manager = ImagesManager(config)
+    image_manager.initialize_dirs(2, config["epochs"])
 
-    lr_shape = (lr_size, lr_size, channels)
-    hr_shape = (hr_size, hr_size, channels)
+    imgs_config = config["images"]
 
-    train_opts = opts.get("train")
+    train_config = config["train"]
+    g_config = train_config["generator"]
+    d_config = train_config["discriminator"]
 
-    g_opts = train_opts.get("generator")
-    g_lr = g_opts.get("lr")
+    pretrain_config = load_yaml("./configs/pretrain.yaml")
 
-    d_opts = train_opts.get("discriminator")
-    d_lr = d_opts.get("lr")
+    # define network
+    generator = psnr_pretrain(pretrain_config)
+    # generator = RRDB_Model(
+    #     imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"]
+    # )
+    
+    discriminator = DiscriminatorVGG128(imgs_config["gt_size"], imgs_config["channels"])
 
-    generator = build_rrdbn(lr_shape)
-    discriminator = build_discriminator(hr_shape)
+    # load dataset
+    train_dataset = load_datasets(
+        config["datasets"], "train_datasets", config["batch_size"], shuffle=False
+    )
+    # image_loader = image_manager.get_dataset()
+    process_image = define_image_process(imgs_config["gt_size"], imgs_config["scale"])
 
-    # Create enhanced super resolution gan model
-    model = ESRGAN(
-        generator=generator, discriminator=discriminator, image_manager=image_manager
+    # define losses function
+    pixel_loss_fn = PixelLoss(criterion="l1")
+    fea_loss_fn = ContentLoss(criterion="l1")
+    gen_loss_fn = GeneratorLoss(gan_type="ragan")
+    dis_loss_fn = DiscriminatorLoss(gan_type="ragan")
+
+    # define optimizer
+    learning_rate_G = MultiStepLR(
+        g_config["lr"], train_config["lr_steps"], train_config["lr_rate"]
+    )
+    learning_rate_D = MultiStepLR(
+        d_config["lr"], train_config["lr_steps"], train_config["lr_rate"]
+    )
+    optimizer_G = tf.keras.optimizers.Adam(
+        learning_rate=learning_rate_G,
+        beta_1=g_config["adam_beta1"],
+        beta_2=g_config["adam_beta2"],
+    )
+    optimizer_D = tf.keras.optimizers.Adam(
+        learning_rate=learning_rate_D,
+        beta_1=d_config["adam_beta1"],
+        beta_2=d_config["adam_beta2"],
     )
 
-    # Compile the model
-    model.compile(
-        gen_optimizer=keras.optimizers.Adam(learning_rate=g_lr),
-        disc_optimizer=keras.optimizers.Adam(learning_rate=d_lr),
-        gen_metrics=[psnr, ssim],
-        disc_metrics=[],
+    model_ema = tf.train.ExponentialMovingAverage(decay=train_config["ema_decay"])
+
+    # load checkpoint
+    checkpoint_dir = "./checkpoints/" + config["net"]
+    checkpoint = tf.train.Checkpoint(
+        step=tf.Variable(0, name="step"),
+        optimizer_G=optimizer_G,
+        optimizer_D=optimizer_D,
+        model=generator,
+        discriminator=discriminator,
+    )
+    manager = tf.train.CheckpointManager(
+        checkpoint=checkpoint, directory=checkpoint_dir, max_to_keep=3
     )
 
-    return model
+    if manager.latest_checkpoint:
+        ckpt_status = checkpoint.restore(manager.latest_checkpoint)
+        ckpt_status.assert_consumed()
+        print(
+            ">> load ckpt from {} at step {}.".format(
+                manager.latest_checkpoint, checkpoint.step.numpy()
+            )
+        )
+    else:
+        if train_config["pretrain"] is not None:
+            pretrain_dir = "./checkpoints/" + train_config["pretrain"]
+            if tf.train.latest_checkpoint(pretrain_dir):
+                checkpoint.restore(tf.train.latest_checkpoint(pretrain_dir))
+                checkpoint.step.assign(0)
+                print(">> training from pretrain model {}.".format(pretrain_dir))
+            else:
+                print(">> cannot find pretrain model {}.".format(pretrain_dir))
+                raise Exception()
+        else:
+            print(">> training from scratch.")
+    # print(">> training from pre-training trained just now.")
+
+    # define training step function
+    @tf.function
+    def train_step(lr, hr):
+        step_output = {}
+
+        with tf.GradientTape(persistent=True) as tape:
+            sr = generator(lr, training=True)
+            hr_output = discriminator(hr, training=True)
+            sr_output = discriminator(sr, training=True)
+
+            losses_G = {}
+            losses_D = {}
+            losses_G["reg"] = tf.reduce_sum(generator.losses)
+            losses_D["reg"] = tf.reduce_sum(discriminator.losses)
+            losses_G["pixel"] = train_config["pixel_weight"] * pixel_loss_fn(hr, sr)
+            losses_G["feature"] = train_config["feature_weight"] * fea_loss_fn(hr, sr)
+            losses_G["gan"] = train_config["gen_weight"] * gen_loss_fn(
+                hr_output, sr_output
+            )
+            losses_D["gan"] = dis_loss_fn(hr_output, sr_output)
+            total_loss_G = tf.add_n([l for l in losses_G.values()])
+            total_loss_D = tf.add_n([l for l in losses_D.values()])
+
+        grads_G = tape.gradient(total_loss_G, generator.trainable_variables)
+        grads_D = tape.gradient(total_loss_D, discriminator.trainable_variables)
+
+        optimizer_G.apply_gradients(zip(grads_G, generator.trainable_variables))
+        optimizer_D.apply_gradients(zip(grads_D, discriminator.trainable_variables))
+
+        # with tf.control_dependencies([gen_op]):
+        #     self.ema.apply(generator.trainable_variables)
+        # with tf.control_dependencies([disc_op]):
+        #     self.ema.apply(discriminator.trainable_variables)
+
+        # step_output.update({m.__name__: m(hr, sr) for m in gen_metrics})
+        # step_output.update(
+        #     {
+        #         f"{m.__name__}_real": m(tf.ones_like(hr_output), hr_output)
+        #         for m in disc_metrics
+        #     }
+        # )
+        # step_output.update(
+        #     {
+        #         f"{m.__name__}_fake": m(tf.zeros_like(sr_output), sr_output)
+        #         for m in disc_metrics
+        #     }
+        # )
+
+        # step_output.update(
+        #     {
+        #         "loss_G": total_loss_G,
+        #         "loss_D": total_loss_D,
+        #     }
+        # )
+
+        return total_loss_G, total_loss_D, losses_G, losses_D
+
+    # training loop
+    summary_writer = tf.summary.create_file_writer("./logs/" + config["net"])
+    prog_bar = ProgressBar(config["epochs"], checkpoint.step.numpy())
+    remain_steps = max(config["epochs"] - checkpoint.step.numpy(), 0)
+
+    for raw_img in train_dataset.take(remain_steps):
+        lr, hr = process_image(raw_img)
+
+        checkpoint.step.assign_add(1)
+        steps = checkpoint.step.numpy()
+
+        total_loss_G, total_loss_D, losses_G, losses_D = train_step(lr, hr)
+
+        prog_bar.update(
+            "loss_G={:.4f}, loss_D={:.4f}, lr_G={:.1e}, lr_D={:.1e}".format(
+                total_loss_G.numpy(),
+                total_loss_D.numpy(),
+                optimizer_G.lr(steps).numpy(),
+                optimizer_D.lr(steps).numpy(),
+            )
+        )
+
+        if steps % 10 == 0:
+            with summary_writer.as_default():
+                tf.summary.scalar("loss_G/total_loss", total_loss_G, step=steps)
+                tf.summary.scalar("loss_D/total_loss", total_loss_D, step=steps)
+                for k, l in losses_G.items():
+                    tf.summary.scalar("loss_G/{}".format(k), l, step=steps)
+                for k, l in losses_D.items():
+                    tf.summary.scalar("loss_D/{}".format(k), l, step=steps)
+
+                tf.summary.scalar("learning_rate_G", optimizer_G.lr(steps), step=steps)
+                tf.summary.scalar("learning_rate_D", optimizer_D.lr(steps), step=steps)
+
+        if steps % config["save_steps"] == 0:
+            manager.save()
+            print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
+
+        if steps % config["gen_steps"] == 0:
+            image_manager.generate_and_save_images(generator, steps, 2)
+
+    print(f"\n>> {config['net']} training done!")

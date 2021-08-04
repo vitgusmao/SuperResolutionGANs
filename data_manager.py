@@ -59,7 +59,7 @@ class ImagesManager:
 
         # Listando os nomes de todos os arquivos no diretório do dataset de treino
         self.test_images_names = [
-            glob.glob("{}*.*".format(path)) for path in self.test_dataset_paths
+            glob.glob("{}*.*".format(path)).sorted() for path in self.test_dataset_paths
         ][: self.test_size]
 
     def process_image(self, image):

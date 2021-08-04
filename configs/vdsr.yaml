@@ -11,7 +11,10 @@ images:
   scale: 4
 
 train:
-  lr: !!float 1e-4
+  lr_values: [!!float 1e-4, !!float 5e-5]
+  boundaries: [200000]
+  adam_beta1: 0.9
+  adam_beta2: 0.99
   num_filters: 64
   criterion: "l1"
   loss_weight: 1.0

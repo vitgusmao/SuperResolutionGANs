@@ -3,8 +3,8 @@ from keras.layers.convolutional import Conv2D
 from keras.models import Model
 
 
-def Discriminator(input_shape, filters=64):
-
+def Discriminator(gt_size, channels=3, filters=64):
+    input_shape = (gt_size, gt_size, channels)
     net_input = Input(input_shape)
 
     block = 0

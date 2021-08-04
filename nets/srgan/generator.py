@@ -21,9 +21,10 @@ def UpSample2D(layer_input):
     return x
 
 
-def RB_Model(input_shape, channels=3, generator_filters=64, num_blocks=16):
+def RB_Model(gt_size, scale, channels=3, generator_filters=64, num_blocks=16):
+    size = int(gt_size / scale)
 
-    net_input = Input(shape=input_shape)
+    net_input = Input(shape=[size, size, channels])
 
     conv1 = Conv2D(64, kernel_size=9, strides=1, padding="same")(net_input)
     conv1 = PReLU()(conv1)
@@ -49,4 +50,4 @@ def RB_Model(input_shape, channels=3, generator_filters=64, num_blocks=16):
     model = Model(inputs=net_input, outputs=output, name="Generator")
     model.summary(line_length=80)
 
-    return Model
+    return model

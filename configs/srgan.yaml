@@ -1,0 +1,44 @@
+net: "srgan"
+type: "gan"
+epochs: 500
+batch_size: 1
+save_steps: 1000
+gen_steps: 50
+
+images:
+  gt_size: 256
+  channels: 3
+  scale: 4
+
+datasets:
+  train_datasets:
+    img_align_celeba:
+      path: "../datasets/img_align_celeba/"
+
+  test_datasets:
+    img_align_celeba:
+      path: "../datasets/img_align_celeba/"
+
+  test_size: 10
+
+train:
+  generator:
+    lr: !!float 1e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.99
+    num_filters: 64
+    num_blocks: 16
+
+  discriminator:
+    lr: !!float 4e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.99
+    num_filters: 64
+
+  lr_steps: [50000, 100000, 200000, 300000]
+  lr_rate: 0.5
+  ema_decay: 0.9999
+  pixel_weight: !!float 1e-2
+  feature_weight: 1.0
+  gen_weight: !!float 5e-3
+  pretrain: psnr_pretrain

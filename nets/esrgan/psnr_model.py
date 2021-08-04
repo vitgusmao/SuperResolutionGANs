@@ -43,18 +43,17 @@ def psnr_pretrain(config):
         train_config["lr"], train_config["lr_steps"], train_config["lr_rate"]
     )
     optimizer = tf.keras.optimizers.Adam(
-        learning_rate=tf.Variable(train_config["lr"]),
+        learning_rate=learning_rate,
         beta_1=tf.Variable(train_config["adam_beta1"]),
         beta_2=tf.Variable(train_config["adam_beta2"]),
     )
     optimizer.iterations
-    model.compile(optimizer=optimizer)
 
     # load checkpoint
     checkpoint_dir = "./checkpoints/" + config["net"]
     checkpoint = tf.train.Checkpoint(
         step=tf.Variable(0, name="step"),
-        # optimizer=optimizer,
+        optimizer=optimizer,
         model=model,
     )
     manager = tf.train.CheckpointManager(
@@ -62,10 +61,9 @@ def psnr_pretrain(config):
     )
 
     
-    # model.load_weights(checkpoint_dir).assert_consumed()
     if manager.latest_checkpoint:
-        # ckpt_status = checkpoint.restore(manager.latest_checkpoint)
-        # ckpt_status.expect_partial()
+        ckpt_status = checkpoint.restore(manager.latest_checkpoint)
+        ckpt_status.expect_partial()
         # ckpt_status.assert_consumed()
         print(
             ">> load ckpt from {} at step {}.".format(
@@ -120,12 +118,11 @@ def psnr_pretrain(config):
                 tf.summary.scalar("learning_rate", optimizer.lr(steps), step=steps)
 
         if steps % config["save_steps"] == 0:
-            # manager.save()
-            model.save_weights(checkpoint_dir)
+            manager.save()
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
-            image_manager.generate_and_save_images(model, steps, 2)
+            image_manager.generate_and_save_images_cnn(model, steps, 2)
 
     print(f"\n>> training done for {config['net']}!")
 
