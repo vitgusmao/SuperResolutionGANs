@@ -102,7 +102,7 @@ class ResInResDenseBlock(tf.keras.layers.Layer):
         out = self.rdb_3(out)
         return out * self.res_beta + x
 
-
+# Based on https://github.com/peteryuX/esrgan-tf2 implementation of https://github.com/xinntao/BasicSR implementation
 def RRDB_Model(
     gt_size, scale, channels, nf=64, nb=16, gc=32, wd=0.0, name="RRDB_model"
 ):

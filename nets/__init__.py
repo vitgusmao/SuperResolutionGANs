@@ -1,7 +1,7 @@
-# from .srcnn import *
-# from .vdsr import *
-# from .srgan import *
-# from .esrgan import *
+from .srcnn import *
+from .vdsr import *
+from .srgan import *
+from .esrgan import * 
 
 # from registry import MODEL_REGISTRY, CALLBACK_REGISTRY
 

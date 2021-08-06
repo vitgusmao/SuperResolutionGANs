@@ -45,9 +45,9 @@ class ImagesManager:
         self.epochs = config["epochs"]
 
         self.net_name = config["net"]
-        self.base_output_path = "results/"
+        self.base_monitor_path = "monitor/"
         self.train_monitor_paths = [
-            f"{self.base_output_path}{dataset}/{self.net_name}/"
+            f"{self.base_monitor_path}{dataset}/{self.net_name}/"
             for dataset in self.train_dataset_names
         ]
         self.format = "png"
@@ -59,8 +59,9 @@ class ImagesManager:
 
         # Listando os nomes de todos os arquivos no diretório do dataset de treino
         self.test_images_names = [
-            glob.glob("{}*.*".format(path)).sorted() for path in self.test_dataset_paths
+            glob.glob("{}*.*".format(path)) for path in self.test_dataset_paths
         ][: self.test_size]
+        [names.sort() for names in self.test_images_names]
 
     def process_image(self, image):
         image = np.array(image).astype(np.float32)
@@ -292,6 +293,7 @@ class ImagesManager:
 
         return InterpolatedImageLoader(train_images, opts)
 
+
 def load_images_datasets(
     datasets_paths,
     batch_size,
@@ -419,10 +421,6 @@ def define_image_process_interpolated(gt_size, scale):
     return process
 
 
-
-
-
-
 class InterpolatedImageLoader(tf.keras.utils.Sequence):
     def __init__(self, images, opts):
         self.batch_size = opts.get("batch_size")
@@ -498,4 +496,3 @@ class InterpolatedImageLoader(tf.keras.utils.Sequence):
         y = [self.process_y(img) for img in y]
         y = tf.cast(y, dtype=tf.float32)
         return y
-

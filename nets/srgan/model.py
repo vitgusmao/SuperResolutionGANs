@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 
 from registry import MODEL_REGISTRY
-from utils import ProgressBar
+from utils import ProgressBar, load_yaml
 from data_manager import ImagesManager, load_datasets, define_image_process
 
 from metrics import psnr, ssim
@@ -11,10 +11,12 @@ from nets.srgan.discriminator import Discriminator
 from lr_schedule import MultiStepLR
 from losses import GeneratorLoss, DiscriminatorLoss, ContentLoss
 
+from .psnr_model import gan_pretrain
+
 
 @MODEL_REGISTRY.register()
 def srgan(config):
-    
+
     image_manager = ImagesManager(config)
     image_manager.initialize_dirs(2, config["epochs"])
 
@@ -24,8 +26,13 @@ def srgan(config):
     g_config = train_config["generator"]
     d_config = train_config["discriminator"]
 
+
     # define network
-    generator = RB_Model(imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"])
+    # pretrain_config = load_yaml("./configs/srgan_pretrain.yaml")
+    # generator = gan_pretrain(pretrain_config)
+    generator = RB_Model(
+        imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"]
+    )
     discriminator = Discriminator(imgs_config["gt_size"], imgs_config["channels"])
 
     # load dataset
@@ -74,12 +81,26 @@ def srgan(config):
     )
 
     if manager.latest_checkpoint:
-        checkpoint.restore(manager.latest_checkpoint)
+        ckpt_status = checkpoint.restore(manager.latest_checkpoint)
+        # ckpt_status.assert_consumed()
         print(
-            f">> load ckpt from {manager.latest_checkpoint} at step {checkpoint.step.numpy()}."
+            ">> load ckpt from {} at step {}.".format(
+                manager.latest_checkpoint, checkpoint.step.numpy()
+            )
         )
     else:
-        print(">> training from scratch.")
+        if train_config["pretrain"] is not None:
+            pretrain_dir = "./checkpoints/" + train_config["pretrain"]
+            if tf.train.latest_checkpoint(pretrain_dir):
+                checkpoint.restore(tf.train.latest_checkpoint(pretrain_dir))
+
+                checkpoint.step.assign(0)
+                print(">> training from pretrain model {}.".format(pretrain_dir))
+            else:
+                print(">> cannot find pretrain model {}.".format(pretrain_dir))
+                raise Exception()
+        else:
+            print(">> training from scratch.")
 
     # define training step function
     @tf.function
@@ -87,14 +108,14 @@ def srgan(config):
         step_output = {}
 
         with tf.GradientTape(persistent=True) as tape:
-            sr = generator(lr, training=True)
-            hr_output = discriminator(hr, training=True)
-            sr_output = discriminator(sr, training=True)
+            sr = checkpoint.model(lr, training=True)
+            hr_output = checkpoint.discriminator(hr, training=True)
+            sr_output = checkpoint.discriminator(sr, training=True)
 
             losses_G = {}
             losses_D = {}
-            losses_G["reg"] = tf.reduce_sum(generator.losses)
-            losses_D["reg"] = tf.reduce_sum(discriminator.losses)
+            losses_G["reg"] = tf.reduce_sum(checkpoint.model.losses)
+            losses_D["reg"] = tf.reduce_sum(checkpoint.discriminator.losses)
             losses_G["feature"] = train_config["feature_weight"] * fea_loss_fn(hr, sr)
             losses_G["gan"] = train_config["gen_weight"] * gen_loss_fn(
                 hr_output, sr_output
@@ -103,11 +124,17 @@ def srgan(config):
             total_loss_G = tf.add_n([l for l in losses_G.values()])
             total_loss_D = tf.add_n([l for l in losses_D.values()])
 
-        grads_G = tape.gradient(total_loss_G, generator.trainable_variables)
-        grads_D = tape.gradient(total_loss_D, discriminator.trainable_variables)
+        grads_G = tape.gradient(total_loss_G, checkpoint.model.trainable_variables)
+        grads_D = tape.gradient(
+            total_loss_D, checkpoint.discriminator.trainable_variables
+        )
 
-        optimizer_G.apply_gradients(zip(grads_G, generator.trainable_variables))
-        optimizer_D.apply_gradients(zip(grads_D, discriminator.trainable_variables))
+        checkpoint.optimizer_G.apply_gradients(
+            zip(grads_G, checkpoint.model.trainable_variables)
+        )
+        checkpoint.optimizer_D.apply_gradients(
+            zip(grads_D, checkpoint.discriminator.trainable_variables)
+        )
 
         # with tf.control_dependencies([gen_op]):
         #     self.ema.apply(generator.trainable_variables)

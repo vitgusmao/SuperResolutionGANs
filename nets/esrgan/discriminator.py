@@ -24,7 +24,7 @@ def _kernel_init(scale=1.0, seed=None):
         scale=scale, mode="fan_in", distribution="truncated_normal", seed=seed
     )
 
-
+# Based on https://github.com/peteryuX/esrgan-tf2 implementation of https://github.com/xinntao/BasicSR implementation
 def DiscriminatorVGG128(size, channels, nf=64, wd=0.0, name="Discriminator_VGG_128"):
     """Discriminator VGG 128"""
     lrelu_f = functools.partial(LeakyReLU, alpha=0.2)

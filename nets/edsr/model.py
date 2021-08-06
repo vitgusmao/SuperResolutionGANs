@@ -1,4 +1,3 @@
-from losses import PixelLoss
 import ipdb
 import tensorflow as tf
 from keras.layers import Add, Lambda, Input
@@ -7,20 +6,26 @@ from keras.models import Model
 import numpy as np
 
 from data_manager import ImagesManager, define_image_process, load_datasets
-from utils import normalize, denormalize, ProgressBar
+from utils import ProgressBar
 from registry import MODEL_REGISTRY
+
+from lr_schedule import MultiStepLR
+from losses import PixelLoss
 
 
 def pixel_shuffle(scale):
     return lambda x: tf.nn.depth_to_space(x, scale)
 
 
-def EDSR_Model(scale, num_filters=64, num_res_blocks=8, res_block_scaling=None):
-    x_in = Input(shape=(None, None, 3))
-    # x = Lambda(lambda x: normalize(x.numpy()))(x_in)
+def EDSR_Model(
+    gt_size, scale, num_filters=64, num_res_blocks=8, res_block_scaling=None
+):
+    input_shape = int(gt_size / scale)
+    x_in = Input(shape=(input_shape, input_shape, 3))
+    # x_in = Input(shape=(None, None, 3)) # Isso talvez permita qualquer tamanho?
 
     x = b = Conv2D(num_filters, 3, padding="same")(x_in)
-    for i in range(num_res_blocks):
+    for _ in range(num_res_blocks):
         b = res_block(b, num_filters, res_block_scaling)
     b = Conv2D(num_filters, 3, padding="same")(b)
     x = Add()([x, b])
@@ -28,7 +33,6 @@ def EDSR_Model(scale, num_filters=64, num_res_blocks=8, res_block_scaling=None):
     x = upsample(x, scale, num_filters)
     x = Conv2D(3, 3, padding="same")(x)
 
-    # x = Lambda(lambda x: denormalize(x.numpy()))(x)
     return Model(x_in, x, name="edsr")
 
 
@@ -57,45 +61,6 @@ def upsample(x, scale, num_filters):
     return x
 
 
-# def edsr(config):
-
-#     loss_mean = PixelLoss(config)
-
-#     ckpt_mgr = self.checkpoint_manager
-#     ckpt = self.checkpoint
-
-#     self.now = time.perf_counter()
-
-#     for lr, hr in train_dataset.take(steps - ckpt.step.numpy()):
-#         ckpt.step.assign_add(1)
-#         step = ckpt.step.numpy()
-
-#         loss = self.train_step(lr, hr)
-#         loss_mean(loss)
-
-#         if step % evaluate_every == 0:
-#             loss_value = loss_mean.result()
-#             loss_mean.reset_states()
-
-#             # Compute PSNR on validation dataset
-#             psnr_value = self.evaluate(valid_dataset)
-
-#             duration = time.perf_counter() - self.now
-#             print(
-#                 f"{step}/{steps}: loss = {loss_value.numpy():.3f}, PSNR = {psnr_value.numpy():3f} ({duration:.2f}s)"
-#             )
-
-#             if save_best_only and psnr_value <= ckpt.psnr:
-#                 self.now = time.perf_counter()
-#                 # skip saving checkpoint, no PSNR improvement
-#                 continue
-
-#             ckpt.psnr = psnr_value
-#             ckpt_mgr.save()
-
-#             self.now = time.perf_counter()
-
-
 @MODEL_REGISTRY.register()
 def edsr(config):
 
@@ -108,6 +73,7 @@ def edsr(config):
 
     # define network
     model = EDSR_Model(
+        imgs_config["gt_size"],
         imgs_config["scale"],
         train_config["num_filters"],
         train_config["num_blocks"],
@@ -124,8 +90,8 @@ def edsr(config):
     loss_fn = PixelLoss(criterion=train_config["criterion"])
 
     # define optimizer
-    learning_rate = tf.keras.optimizers.schedules.PiecewiseConstantDecay(
-        boundaries=train_config["boundaries"], values=train_config["lr_values"]
+    learning_rate = MultiStepLR(
+        train_config["lr"], train_config["lr_steps"], train_config["lr_rate"]
     )
     optimizer = tf.keras.optimizers.Adam(
         learning_rate=learning_rate,
@@ -147,7 +113,7 @@ def edsr(config):
     if manager.latest_checkpoint:
         ckpt_status = checkpoint.restore(manager.latest_checkpoint)
         ckpt_status.expect_partial()
-        # ckpt_status.assert_consumed()
+
         print(
             ">> load ckpt from {} at step {}.".format(
                 manager.latest_checkpoint, checkpoint.step.numpy()
@@ -160,8 +126,6 @@ def edsr(config):
     @tf.function
     def train_step(lr, hr):
         with tf.GradientTape() as tape:
-            lr = tf.cast(lr, tf.float32)
-            hr = tf.cast(hr, tf.float32)
 
             sr = checkpoint.model(lr, training=True)
             loss_value = loss_fn(hr, sr)
@@ -192,7 +156,7 @@ def edsr(config):
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
-            image_manager.generate_and_save_images_cnn(model, steps, 2)
+            image_manager.generate_and_save_images(model, steps, 2)
 
     print(f"\n>> training done for {config['net']}!")
 

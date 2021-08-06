@@ -33,7 +33,7 @@ def esrgan(config):
     # generator = RRDB_Model(
     #     imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"]
     # )
-    
+
     discriminator = DiscriminatorVGG128(imgs_config["gt_size"], imgs_config["channels"])
 
     # load dataset
@@ -58,13 +58,13 @@ def esrgan(config):
     )
     optimizer_G = tf.keras.optimizers.Adam(
         learning_rate=learning_rate_G,
-        beta_1=g_config["adam_beta1"],
-        beta_2=g_config["adam_beta2"],
+        beta_1=tf.Variable(g_config["adam_beta1"]),
+        beta_2=tf.Variable(g_config["adam_beta2"]),
     )
     optimizer_D = tf.keras.optimizers.Adam(
         learning_rate=learning_rate_D,
-        beta_1=d_config["adam_beta1"],
-        beta_2=d_config["adam_beta2"],
+        beta_1=tf.Variable(d_config["adam_beta1"]),
+        beta_2=tf.Variable(d_config["adam_beta2"]),
     )
 
     model_ema = tf.train.ExponentialMovingAverage(decay=train_config["ema_decay"])
@@ -84,7 +84,7 @@ def esrgan(config):
 
     if manager.latest_checkpoint:
         ckpt_status = checkpoint.restore(manager.latest_checkpoint)
-        ckpt_status.assert_consumed()
+        # ckpt_status.assert_consumed()
         print(
             ">> load ckpt from {} at step {}.".format(
                 manager.latest_checkpoint, checkpoint.step.numpy()
@@ -95,6 +95,7 @@ def esrgan(config):
             pretrain_dir = "./checkpoints/" + train_config["pretrain"]
             if tf.train.latest_checkpoint(pretrain_dir):
                 checkpoint.restore(tf.train.latest_checkpoint(pretrain_dir))
+                
                 checkpoint.step.assign(0)
                 print(">> training from pretrain model {}.".format(pretrain_dir))
             else:
@@ -102,7 +103,6 @@ def esrgan(config):
                 raise Exception()
         else:
             print(">> training from scratch.")
-    # print(">> training from pre-training trained just now.")
 
     # define training step function
     @tf.function
@@ -110,14 +110,14 @@ def esrgan(config):
         step_output = {}
 
         with tf.GradientTape(persistent=True) as tape:
-            sr = generator(lr, training=True)
-            hr_output = discriminator(hr, training=True)
-            sr_output = discriminator(sr, training=True)
+            sr = checkpoint.model(lr, training=True)
+            hr_output = checkpoint.discriminator(hr, training=True)
+            sr_output = checkpoint.discriminator(sr, training=True)
 
             losses_G = {}
             losses_D = {}
-            losses_G["reg"] = tf.reduce_sum(generator.losses)
-            losses_D["reg"] = tf.reduce_sum(discriminator.losses)
+            losses_G["reg"] = tf.reduce_sum(checkpoint.model.losses)
+            losses_D["reg"] = tf.reduce_sum(checkpoint.discriminator.losses)
             losses_G["pixel"] = train_config["pixel_weight"] * pixel_loss_fn(hr, sr)
             losses_G["feature"] = train_config["feature_weight"] * fea_loss_fn(hr, sr)
             losses_G["gan"] = train_config["gen_weight"] * gen_loss_fn(
@@ -127,11 +127,17 @@ def esrgan(config):
             total_loss_G = tf.add_n([l for l in losses_G.values()])
             total_loss_D = tf.add_n([l for l in losses_D.values()])
 
-        grads_G = tape.gradient(total_loss_G, generator.trainable_variables)
-        grads_D = tape.gradient(total_loss_D, discriminator.trainable_variables)
+        grads_G = tape.gradient(total_loss_G, checkpoint.model.trainable_variables)
+        grads_D = tape.gradient(
+            total_loss_D, checkpoint.discriminator.trainable_variables
+        )
 
-        optimizer_G.apply_gradients(zip(grads_G, generator.trainable_variables))
-        optimizer_D.apply_gradients(zip(grads_D, discriminator.trainable_variables))
+        checkpoint.optimizer_G.apply_gradients(
+            zip(grads_G, checkpoint.model.trainable_variables)
+        )
+        checkpoint.optimizer_D.apply_gradients(
+            zip(grads_D, checkpoint.discriminator.trainable_variables)
+        )
 
         # with tf.control_dependencies([gen_op]):
         #     self.ema.apply(generator.trainable_variables)
