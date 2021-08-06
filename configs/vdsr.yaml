@@ -1,9 +1,9 @@
-net: "vdsr"
+name: "vdsr"
 type: "cnn"
-epochs: 100
+epochs: 5000
 batch_size: 1
 save_steps: 1000
-gen_steps: 1
+gen_steps: 100
 
 images:
   gt_size: 256
@@ -11,8 +11,9 @@ images:
   scale: 4
 
 train:
-  lr_values: [!!float 1e-4, !!float 5e-5]
-  boundaries: [200000]
+  lr: !!float 1e-1
+  lr_steps: [200000]
+  lr_rate: 0.5
   adam_beta1: 0.9
   adam_beta2: 0.99
   num_filters: 64

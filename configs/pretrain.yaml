@@ -1,8 +1,8 @@
-net: "psnr_pretrain"
-epochs: 1050
+name: "psnr_pretrain"
+epochs: 100000
 batch_size: 1
-save_steps: 1000
-gen_steps: 50
+save_steps: 10000
+gen_steps: 1000
 
 images:
   gt_size: 256
@@ -22,11 +22,11 @@ train:
 
 datasets:
   train_datasets:
-    img_align_celeba:
-      path: "../datasets/img_align_celeba/"
+    FFHQ:
+      path: "../datasets/FFHQ/"
 
   test_datasets:
-    img_align_celeba:
-      path: "../datasets/img_align_celeba/"
+    Celeba_HQ:
+      path: "../datasets/Celeba_HQ_val/"
 
   test_size: 10

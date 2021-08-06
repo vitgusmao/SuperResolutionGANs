@@ -1,9 +1,8 @@
-name: "srcnn"
-type: "cnn"
+name: "gan_pretrain"
 epochs: 100000
 batch_size: 1
 save_steps: 10000
-gen_steps: 2000
+gen_steps: 1000
 
 images:
   gt_size: 256
@@ -11,14 +10,15 @@ images:
   scale: 4
 
 train:
-  lr: !!float 1e-4
-  lr_steps: [200000]
-  lr_rate: 0.5
   adam_beta1: 0.9
   adam_beta2: 0.99
+  lr: !!float 2e-4
+  lr_steps: [100000]
+  lr_rate: 0.1
+  pixel_criterion: "l1"
+  pixel_weight: 1.0
   num_filters: 64
-  criterion: "l1"
-  loss_weight: 1.0
+  num_blocks: 16
 
 datasets:
   train_datasets:
@@ -26,7 +26,7 @@ datasets:
       path: "../datasets/FFHQ/"
 
   test_datasets:
-    img_align_celeba:
-      path: "../datasets/Celeba_HQ_val/"
+    Celeba_HQ:
+      path: "../datasets/Celeba_HQ_valid/"
 
   test_size: 10

@@ -4,7 +4,8 @@ from keras.layers import Input, Activation
 from keras.layers.convolutional import Conv2D
 from keras.models import Model
 import numpy as np
-
+import pandas as pd
+import copy
 
 from utils import ProgressBar
 from data_manager import ImagesManager, load_datasets, define_image_process_interpolated
@@ -12,6 +13,7 @@ from registry import MODEL_REGISTRY
 
 from losses import PixelLoss
 from lr_schedule import MultiStepLR
+from metrics import psnr, ssim
 
 
 def SRCNN_Model(gt_size, channels=3, filters=64):
@@ -37,8 +39,17 @@ def srcnn(config):
     image_manager = ImagesManager(config)
     image_manager.initialize_dirs(2, config["epochs"])
 
-    imgs_config = config["images"]
+    try:
+        history_df = pd.read_csv(f"./histories/{config['name']}.csv")
+        history = {
+            col_name: history_df[col_name].tolist() for col_name in history_df.columns
+        }
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        history = {"loss": [], "psnr": [], "ssim": []}
+    _history = copy.deepcopy(history)
 
+
+    imgs_config = config["images"]
     train_config = config["train"]
 
     # define network
@@ -69,7 +80,7 @@ def srcnn(config):
     )
 
     # load checkpoint
-    checkpoint_dir = "./checkpoints/" + config["net"]
+    checkpoint_dir = "./checkpoints/" + config["name"]
     checkpoint = tf.train.Checkpoint(
         step=tf.Variable(0, name="step"),
         optimizer=optimizer,
@@ -106,7 +117,7 @@ def srcnn(config):
             zip(gradients, checkpoint.model.trainable_variables)
         )
 
-        return loss_value
+        return loss_value, sr
 
     # training loop
     prog_bar = ProgressBar(config["epochs"], checkpoint.step.numpy())
@@ -118,12 +129,22 @@ def srcnn(config):
         checkpoint.step.assign_add(1)
         steps = checkpoint.step.numpy()
 
-        total_loss = train_step(lr, hr)
+        total_loss, sr = train_step(lr, hr)
 
         prog_bar.update("loss={:.4f}".format(total_loss.numpy()))
 
+        img_psnr = psnr(hr, sr).numpy()
+        img_ssim = ssim(hr, sr).numpy()
+        if img_psnr.shape[0] == 1:
+            img_psnr = img_psnr.squeeze()
+            img_ssim = img_ssim.squeeze()
+        _history["psnr"].append(img_psnr)
+        _history["ssim"].append(img_ssim)
+        _history["loss"].append(total_loss.numpy())
+
         if steps % config["save_steps"] == 0:
             manager.save()
+            history = copy.deepcopy(_history)
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
@@ -131,4 +152,4 @@ def srcnn(config):
 
     print(f"\n>> training done for {config['net']}!")
 
-    return model
+    return history

@@ -132,6 +132,7 @@ dmypy.json
 .vscode
 
 checkpoints/*
+histories/*
 monitor/*
 results/*
 logs/*

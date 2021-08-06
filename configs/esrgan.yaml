@@ -1,9 +1,9 @@
-net: "esrgan"
+name: "esrgan"
 type: "gan"
-epochs: 1000
+epochs: 20000
 batch_size: 1
 save_steps: 1000
-gen_steps: 50
+gen_steps: 500
 
 images:
   gt_size: 256
@@ -12,12 +12,12 @@ images:
 
 datasets:
   train_datasets:
-    img_align_celeba:
-      path: "../datasets/img_align_celeba/"
+    FFHQ:
+      path: "../datasets/FFHQ/"
 
   test_datasets:
-    img_align_celeba:
-      path: "../datasets/img_align_celeba/"
+    Celeba_HQ:
+      path: "../datasets/Celeba_HQ_valid/"
 
   test_size: 10
 

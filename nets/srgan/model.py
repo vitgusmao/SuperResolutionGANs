@@ -1,5 +1,7 @@
 import tensorflow as tf
 import numpy as np
+import copy
+import pandas as pd
 
 from registry import MODEL_REGISTRY
 from utils import ProgressBar, load_yaml
@@ -20,12 +22,19 @@ def srgan(config):
     image_manager = ImagesManager(config)
     image_manager.initialize_dirs(2, config["epochs"])
 
-    imgs_config = config["images"]
+    try:
+        history_df = pd.read_csv(f"./histories/{config['name']}.csv")
+        history = {
+            col_name: history_df[col_name].tolist() for col_name in history_df.columns
+        }
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        history = {"loss_G": [], "loss_D": [], "psnr": [], "ssim": []}
+    _history = copy.deepcopy(history)
 
+    imgs_config = config["images"]
     train_config = config["train"]
     g_config = train_config["generator"]
     d_config = train_config["discriminator"]
-
 
     # define network
     # pretrain_config = load_yaml("./configs/srgan_pretrain.yaml")
@@ -68,7 +77,7 @@ def srgan(config):
     model_ema = tf.train.ExponentialMovingAverage(decay=train_config["ema_decay"])
 
     # load checkpoint
-    checkpoint_dir = "./checkpoints/" + config["net"]
+    checkpoint_dir = "./checkpoints/" + config["name"]
     checkpoint = tf.train.Checkpoint(
         step=tf.Variable(0, name="step"),
         optimizer_G=optimizer_G,
@@ -105,7 +114,6 @@ def srgan(config):
     # define training step function
     @tf.function
     def train_step(lr, hr):
-        step_output = {}
 
         with tf.GradientTape(persistent=True) as tape:
             sr = checkpoint.model(lr, training=True)
@@ -141,31 +149,10 @@ def srgan(config):
         # with tf.control_dependencies([disc_op]):
         #     self.ema.apply(discriminator.trainable_variables)
 
-        # step_output.update({m.__name__: m(hr, sr) for m in gen_metrics})
-        # step_output.update(
-        #     {
-        #         f"{m.__name__}_real": m(tf.ones_like(hr_output), hr_output)
-        #         for m in disc_metrics
-        #     }
-        # )
-        # step_output.update(
-        #     {
-        #         f"{m.__name__}_fake": m(tf.zeros_like(sr_output), sr_output)
-        #         for m in disc_metrics
-        #     }
-        # )
-
-        # step_output.update(
-        #     {
-        #         "loss_G": total_loss_G,
-        #         "loss_D": total_loss_D,
-        #     }
-        # )
-
-        return total_loss_G, total_loss_D, losses_G, losses_D
+        return total_loss_G, total_loss_D, losses_G, losses_D, sr
 
     # training loop
-    summary_writer = tf.summary.create_file_writer("./logs/" + config["net"])
+    summary_writer = tf.summary.create_file_writer("./logs/" + config["name"])
     prog_bar = ProgressBar(config["epochs"], checkpoint.step.numpy())
     remain_steps = max(config["epochs"] - checkpoint.step.numpy(), 0)
 
@@ -175,7 +162,7 @@ def srgan(config):
         checkpoint.step.assign_add(1)
         steps = checkpoint.step.numpy()
 
-        total_loss_G, total_loss_D, losses_G, losses_D = train_step(lr, hr)
+        total_loss_G, total_loss_D, losses_G, losses_D, sr = train_step(lr, hr)
 
         prog_bar.update(
             "loss_G={:.4f}, loss_D={:.4f}, lr_G={:.1e}, lr_D={:.1e}".format(
@@ -185,6 +172,16 @@ def srgan(config):
                 optimizer_D.lr(steps).numpy(),
             )
         )
+
+        img_psnr = psnr(hr, sr).numpy()
+        img_ssim = ssim(hr, sr).numpy()
+        if img_psnr.shape[0] == 1:
+            img_psnr = img_psnr.squeeze()
+            img_ssim = img_ssim.squeeze()
+        _history["psnr"].append(img_psnr)
+        _history["ssim"].append(img_ssim)
+        _history["loss_G"].append(total_loss_G.numpy())
+        _history["loss_D"].append(total_loss_D.numpy())
 
         if steps % 10 == 0:
             with summary_writer.as_default():
@@ -200,9 +197,12 @@ def srgan(config):
 
         if steps % config["save_steps"] == 0:
             manager.save()
+            history = copy.deepcopy(_history)
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
             image_manager.generate_and_save_images(generator, steps, 2)
 
     print(f"\n>> {config['net']} training done!")
+
+    return history

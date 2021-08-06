@@ -1,4 +1,7 @@
 import tensorflow as tf
+import copy
+import os
+import pandas as pd
 
 from metrics import psnr, ssim
 from nets.esrgan.rrdbnet import RRDB_Model
@@ -15,8 +18,16 @@ def psnr_pretrain(config):
     image_manager = ImagesManager(config)
     image_manager.initialize_dirs(2, config["epochs"])
 
-    imgs_config = config["images"]
+    try:
+        history_df = pd.read_csv(f"./histories/{config['name']}.csv")
+        history = {
+            col_name: history_df[col_name].tolist() for col_name in history_df.columns
+        }
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        history = {"loss": [], "psnr": [], "ssim": []}
+    _history = copy.deepcopy(history)
 
+    imgs_config = config["images"]
     train_config = config["train"]
 
     # define network
@@ -43,7 +54,6 @@ def psnr_pretrain(config):
         train_config["lr"], train_config["lr_steps"], train_config["lr_rate"]
     )
 
-
     optimizer = tf.keras.optimizers.Adam(
         learning_rate=learning_rate,
         beta_1=tf.Variable(train_config["adam_beta1"]),
@@ -51,7 +61,7 @@ def psnr_pretrain(config):
     )
 
     # load checkpoint
-    checkpoint_dir = "./checkpoints/" + config["net"]
+    checkpoint_dir = "./checkpoints/" + config["name"]
     checkpoint = tf.train.Checkpoint(
         step=tf.Variable(0, name="step"),
         optimizer=optimizer,
@@ -64,7 +74,7 @@ def psnr_pretrain(config):
     if manager.latest_checkpoint:
         ckpt_status = checkpoint.restore(manager.latest_checkpoint)
         ckpt_status.expect_partial()
-        
+
         print(
             ">> load ckpt from {} at step {}.".format(
                 manager.latest_checkpoint, checkpoint.step.numpy()
@@ -88,7 +98,7 @@ def psnr_pretrain(config):
 
         # {m.__name__: m(hr, sr) for m in c_metrics}
 
-        return total_loss
+        return total_loss, sr
 
     # training loop
     prog_bar = ProgressBar(config["epochs"], checkpoint.step.numpy())
@@ -108,13 +118,27 @@ def psnr_pretrain(config):
             )
         )
 
+        img_psnr = psnr(hr, sr).numpy()
+        img_ssim = ssim(hr, sr).numpy()
+        if img_psnr.shape[0] == 1:
+            img_psnr = img_psnr.squeeze()
+            img_ssim = img_ssim.squeeze()
+        _history["psnr"].append(img_psnr)
+        _history["ssim"].append(img_ssim)
+        _history["loss"].append(total_loss.numpy())
+
         if steps % config["save_steps"] == 0:
             manager.save()
+            history = copy.deepcopy(_history)
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
             image_manager.generate_and_save_images(model, steps, 2)
 
     print(f"\n>> training done for {config['net']}!")
+
+    os.makedirs("./histories/", exist_ok=True)
+    history_df = pd.DataFrame.from_dict(history)
+    history_df.to_csv(f"./histories/{config['name']}.csv", index=False)
 
     return model

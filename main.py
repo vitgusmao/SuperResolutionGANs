@@ -1,6 +1,9 @@
 import sys
+import os
 import tensorflow as tf
 import argparse
+import pandas
+
 gpu_devices = tf.config.experimental.list_physical_devices("GPU")
 for device in gpu_devices:
     tf.config.experimental.set_memory_growth(device, True)
@@ -23,11 +26,17 @@ from plot.all_informations import plot_togheter
 
 
 parser = argparse.ArgumentParser(description="Options for super resolution")
-parser.add_argument("--config", help="path to yaml config file", default="./configs/pretrain.yaml")
+parser.add_argument(
+    "--config", help="path to yaml config file", default="./configs/pretrain.yaml"
+)
 
 args = parser.parse_args()
 
 with tf.device("/GPU:0"):
     config = load_yaml(args.config)
-    build_net = MODEL_REGISTRY.get(config.get("net"))
-    build_net(config)
+    train = MODEL_REGISTRY.get(config["name"])
+    history = train(config)
+
+    os.makedirs("./histories/", exist_ok=True)
+    history_df = pandas.DataFrame.from_dict(history)
+    history_df.to_csv(f"./histories/{config['name']}.csv", index=False)

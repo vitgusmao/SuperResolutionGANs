@@ -3,6 +3,7 @@ import numpy as np
 import sys
 import time
 import yaml
+import logging
 
 
 def load_yaml(load_path):
@@ -101,10 +102,26 @@ class ProgressBar(object):
         fps = (self.completed - self.first_step) / elapsed
         percentage = self.completed / float(self.task_num)
         mark_width = int(self.bar_width * percentage)
-        bar_chars = ">" * mark_width + " " * (self.bar_width - mark_width)
-        stdout_str = "\rTraining [{}] {}/{}, {}  {:.1f} step/sec"
+        bar_chars = "=" * mark_width + " " * (self.bar_width - mark_width)
+
+        stdout_str = (
+            "\rTraining [{}] {}/{}, {}  {:.1f} step/sec, time: {:02d}h {:02d}m {:02d}s"
+        )
+        seconds = int(elapsed % 60)
+        minutes = int(elapsed // 60)
+        hours = int(minutes // 60)
+        minutes = int(minutes % 60)
         sys.stdout.write(
-            stdout_str.format(bar_chars, self.completed, self.task_num, inf_str, fps)
+            stdout_str.format(
+                bar_chars,
+                self.completed,
+                self.task_num,
+                inf_str,
+                fps,
+                hours,
+                minutes,
+                seconds,
+            )
         )
 
         sys.stdout.flush()

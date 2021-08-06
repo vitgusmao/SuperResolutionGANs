@@ -1,9 +1,9 @@
-net: "edsr"
+name: "edsr"
 type: "cnn"
-epochs: 100
+epochs: 10000
 batch_size: 1
 save_steps: 1000
-gen_steps: 1
+gen_steps: 1000
 
 images:
   gt_size: 256
@@ -11,8 +11,9 @@ images:
   scale: 4
 
 train:
-  boundaries: [200000]
-  lr_values: [!!float 1e-4, !!float 5e-5]
+  lr: !!float 1e-4
+  lr_steps: [200000]
+  lr_rate: 0.5
   num_filters: 64
   criterion: "l1"
   loss_weight: 1.0
@@ -22,11 +23,11 @@ train:
 
 datasets:
   train_datasets:
-    img_align_celeba:
-      path: "../datasets/img_align_celeba/"
+    FFHQ:
+      path: "../datasets/FFHQ/"
 
   test_datasets:
-    img_align_celeba:
-      path: "../datasets/img_align_celeba/"
+    Celeba_HQ:
+      path: "../datasets/Celeba_HQ_val/"
 
   test_size: 10

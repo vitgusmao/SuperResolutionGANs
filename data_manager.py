@@ -20,19 +20,33 @@ from utils import (
 class ImagesManager:
     def __init__(self, config):
         img_info = config["images"]
+        self.format = "png"
 
         gt_size = img_info["gt_size"]
         lr_size = int(gt_size / img_info["scale"])
         self.lr_shape = (lr_size, lr_size)
         self.hr_shape = (gt_size, gt_size)
 
+        net_name = config["name"]
         datasets_info = config["datasets"]
 
-        train_datasets = datasets_info["train_datasets"]
-        self.train_dataset_names = train_datasets.keys()
-        self.train_dataset_paths = [
-            must_finish_with_bar(items["path"]) for items in train_datasets.values()
-        ]
+        if config["type"] != "interpolation":
+            self.batch_size = config["batch_size"]
+            self.epochs = config["epochs"]
+
+            train_datasets = datasets_info["train_datasets"]
+            self.train_dataset_names = train_datasets.keys()
+            self.train_dataset_paths = [
+                must_finish_with_bar(items["path"]) for items in train_datasets.values()
+            ]
+            base_monitor_path = "monitor/"
+            self.train_monitor_paths = [
+                f"{base_monitor_path}{dataset}/{net_name}/"
+                for dataset in self.train_dataset_names
+            ]
+            self.train_images_names = [
+                glob.glob("{}*.*".format(path)) for path in self.train_dataset_paths
+            ]
 
         test_datasets = datasets_info["test_datasets"]
         self.test_dataset_names = test_datasets.keys()
@@ -40,24 +54,12 @@ class ImagesManager:
             must_finish_with_bar(items["path"]) for items in test_datasets.values()
         ]
         self.test_size = datasets_info["test_size"]
-
-        self.batch_size = config["batch_size"]
-        self.epochs = config["epochs"]
-
-        self.net_name = config["net"]
-        self.base_monitor_path = "monitor/"
-        self.train_monitor_paths = [
-            f"{self.base_monitor_path}{dataset}/{self.net_name}/"
-            for dataset in self.train_dataset_names
-        ]
-        self.format = "png"
-
-        # Listando os nomes de todos os arquivos no diretório do dataset de treino
-        self.train_images_names = [
-            glob.glob("{}*.*".format(path)) for path in self.train_dataset_paths
+        base_results_path = "results/"
+        self.test_results_paths = [
+            f"{base_results_path}{dataset}/{net_name}/"
+            for dataset in self.test_dataset_names
         ]
 
-        # Listando os nomes de todos os arquivos no diretório do dataset de treino
         self.test_images_names = [
             glob.glob("{}*.*".format(path)) for path in self.test_dataset_paths
         ][: self.test_size]
@@ -292,6 +294,29 @@ class ImagesManager:
             train_images.extend(images_sets)
 
         return InterpolatedImageLoader(train_images, opts)
+
+    def test_images_interpolation(self):
+
+        for path in self.test_results_paths:
+            os.makedirs(path, exist_ok=True)
+
+        def tester(method):
+
+            for results_path, images_path in zip(
+                self.test_results_paths, self.test_images_names
+            ):
+                for index, path in enumerate(images_path):
+                    image = self.load_image(path)
+                    lr_img = self.resampling(image, self.lr_shape)
+
+                    hr_fake = method(lr_img)
+
+                    index = str(index)
+                    index = index.zfill(len(str(len(images_path))))
+                    image_path = f"{results_path}{index}.{self.format}"
+                    hr_fake.save(image_path)
+
+        return tester
 
 
 def load_images_datasets(
