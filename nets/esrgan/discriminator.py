@@ -1,3 +1,4 @@
+# Based on https://github.com/peteryuX/esrgan-tf2 implementation of https://github.com/xinntao/BasicSR implementation
 from keras.layers.convolutional import Conv2D
 from keras.models import Model
 from keras.layers import (
@@ -25,7 +26,7 @@ def _kernel_init(scale=1.0, seed=None):
 
 
 class BatchNormalization(tf.keras.layers.BatchNormalization):
-    """Make trainable=False freeze BN for real (the og version is sad).
+    """
     ref: https://github.com/zzh8829/yolov3-tf2
     """
 
@@ -56,9 +57,8 @@ class BatchNormalization(tf.keras.layers.BatchNormalization):
         return super().call(x, training)
 
 
-# Based on https://github.com/peteryuX/esrgan-tf2 implementation of https://github.com/xinntao/BasicSR implementation
 def DiscriminatorVGG128(size, channels, nf=64, wd=0.0, name="Discriminator_VGG_128"):
-    """Discriminator VGG 128"""
+    
     lrelu_f = functools.partial(LeakyReLU, alpha=0.2)
     conv_k3s1_f = functools.partial(
         Conv2D,

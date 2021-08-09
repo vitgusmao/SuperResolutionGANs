@@ -17,7 +17,7 @@ datasets:
 
   test_datasets:
     Celeba_HQ:
-      path: "../datasets/Celeba_HQ_valid/"
+      path: "../datasets/Celeba_HQ_val/"
 
   test_size: 10
 

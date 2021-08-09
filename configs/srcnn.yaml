@@ -1,9 +1,9 @@
 name: "srcnn"
 type: "cnn"
-epochs: 100000
+epochs: 200000
 batch_size: 1
 save_steps: 10000
-gen_steps: 2000
+gen_steps: 1000
 
 images:
   gt_size: 256
@@ -22,11 +22,11 @@ train:
 
 datasets:
   train_datasets:
-    FFHQ:
-      path: "../datasets/FFHQ/"
+    ImageNet:
+      path: "../datasets/ImageNet/"
 
   test_datasets:
-    img_align_celeba:
-      path: "../datasets/Celeba_HQ_val/"
+    DIV2K:
+      path: "../datasets/DIV2K_valid_HR/"
 
   test_size: 10
