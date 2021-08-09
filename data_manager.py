@@ -5,7 +5,7 @@ import numpy as np
 import os
 import shutil
 import tensorflow as tf
-
+import pandas as pd
 from PIL import Image, ImageEnhance, ImageOps
 
 from utils import (
@@ -15,6 +15,8 @@ from utils import (
     normalize,
     denormalize,
 )
+
+from metrics import psnr, ssim
 
 
 class ImagesManager:
@@ -27,43 +29,14 @@ class ImagesManager:
         self.lr_shape = (lr_size, lr_size)
         self.hr_shape = (gt_size, gt_size)
 
-        net_name = config["name"]
+        self.base_monitor_path = "monitor"
+
+        self.net_name = config["name"]
         datasets_info = config["datasets"]
 
-        if config["type"] != "interpolation":
-            self.batch_size = config["batch_size"]
-            self.epochs = config["epochs"]
-
-            train_datasets = datasets_info["train_datasets"]
-            self.train_dataset_names = train_datasets.keys()
-            self.train_dataset_paths = [
-                must_finish_with_bar(items["path"]) for items in train_datasets.values()
-            ]
-            base_monitor_path = "monitor/"
-            self.train_monitor_paths = [
-                f"{base_monitor_path}{dataset}/{net_name}/"
-                for dataset in self.train_dataset_names
-            ]
-            self.train_images_names = [
-                glob.glob("{}*.*".format(path)) for path in self.train_dataset_paths
-            ]
-
-        test_datasets = datasets_info["test_datasets"]
-        self.test_dataset_names = test_datasets.keys()
-        self.test_dataset_paths = [
-            must_finish_with_bar(items["path"]) for items in test_datasets.values()
-        ]
+        self.test_datasets = datasets_info["test_datasets"]
         self.test_size = datasets_info["test_size"]
-        base_results_path = "results/"
-        self.test_results_paths = [
-            f"{base_results_path}{dataset}/{net_name}/"
-            for dataset in self.test_dataset_names
-        ]
-
-        self.test_images_names = [
-            glob.glob("{}*.*".format(path)) for path in self.test_dataset_paths
-        ][: self.test_size]
-        [names.sort() for names in self.test_images_names]
+        self.base_results_path = "results"
 
     def process_image(self, image):
         image = np.array(image).astype(np.float32)
@@ -86,7 +59,13 @@ class ImagesManager:
         return images_batch
 
     def resampling(self, image, shape):
-        return image.resize(shape, resample=Image.BICUBIC)
+        org_shape = image.size
+        if org_shape[0] > shape[0] or org_shape[1] > shape[1]:
+            resample_with = Image.LANCZOS
+        else:
+            resample_with = Image.BICUBIC
+
+        return image.resize(shape, resample=resample_with)
 
     def augment_base(self, image):
 
@@ -150,17 +129,17 @@ class ImagesManager:
 
             lr_img = self.resampling(image, self.lr_shape)
             lr_img = self.resampling(lr_img, self.hr_shape)
-            hr_img = self.resampling(image, self.hr_shape)
+            gt_img = self.resampling(image, self.hr_shape)
 
             lr_img = self.process_image(lr_img)
-            hr_img = self.process_image(hr_img)
+            gt_img = self.process_image(gt_img)
 
             # Faz a normalização da escala [0-255] para [0-1]
             lr_img = normalize(lr_img)
-            hr_img = normalize(hr_img)
+            gt_img = normalize(gt_img)
 
             lr_images.append(lr_img)
-            hr_images.append(hr_img)
+            hr_images.append(gt_img)
 
         # Transforma o array em tf.float32, o tipo de float que o tensorflow utiliza durante os cálculos
         lr_images = tf.cast(lr_images, dtype=tf.float32)
@@ -170,6 +149,8 @@ class ImagesManager:
 
     def unprocess_image(self, image, generated=False):
         image = np.array(image)
+        if len(image.shape) == 4 and image.shape[0] == 1:
+            image = image.squeeze()
         image = image.astype(np.uint8)
         check_pixels(image)
 
@@ -188,13 +169,14 @@ class ImagesManager:
         epoch,
         batch_size,
     ):
-        for monitor_path, images_path in zip(
-            self.train_monitor_paths, self.test_images_names
-        ):
+        for (ds_name, ds_items) in self.test_datasets.items():
+            monitor_path = f"{self.base_monitor_path}/{ds_name}/{self.net_name}"
+            images_names = f"{monitor_path}/test_"
 
-            images_names = f"{monitor_path}test_"
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
 
-            _, lr_imgs = self.get_images(batch_size, images_path, is_test=True)
+            _, lr_imgs = self.get_images(batch_size, test_images_paths, is_test=True)
 
             hr_fakes = generator_net(lr_imgs, training=False)
 
@@ -207,7 +189,7 @@ class ImagesManager:
             epoch = epoch.zfill(len(str(self.epochs)))
 
             for index, hr_gen in enumerate(hr_fakes):
-                image_path = images_names + f"{index}/{epoch}.jpg"
+                image_path = images_names + f"{index}/{epoch}.{self.format}"
                 hr_gen.save(image_path)
 
     def generate_and_save_images_cnn(
@@ -216,16 +198,20 @@ class ImagesManager:
         epoch,
         batch_size,
     ):
-        for monitor_path, images_path in zip(
-            self.train_monitor_paths, self.test_images_names
-        ):
-            images_names = f"{monitor_path}test_"
+        for (ds_name, ds_items) in self.test_datasets.items():
+            monitor_path = f"{self.base_monitor_path}/{ds_name}/{self.net_name}"
+            images_names = f"{monitor_path}/test_"
 
-            _, lr_imgs = self.get_images_cnn(batch_size, images_path, is_test=True)
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
+
+            _, lr_imgs = self.get_images_cnn(
+                batch_size, test_images_paths, is_test=True
+            )
 
             hr_fakes = generator_net(lr_imgs, training=False)
 
-            hr_fakes = self.rebuild_images(hr_fakes, True)
+            hr_fakes = self.rebuild_images(hr_fakes, generated=True)
 
             if not self.epochs:
                 raise Exception("missing epochs")
@@ -234,38 +220,27 @@ class ImagesManager:
             epoch = epoch.zfill(len(str(self.epochs)))
 
             for index, hr_gen in enumerate(hr_fakes):
-                image_path = images_names + f"{index}/{epoch}_generated.jpg"
+                image_path = images_names + f"{index}/{epoch}.{self.format}"
                 hr_gen.save(image_path)
 
-    def sample_interpolation(self, interpolation):
-
-        lr_imgs = self.load_test_images()
-
-        hr_interpolated = interpolation(images=lr_imgs)
-
-        hr_interpolated = self.rebuild_images(hr_interpolated, True)
-
-        if not self.epochs:
-            raise Exception("missing epochs")
-
-        for index, hr_gen in enumerate(hr_interpolated):
-            name = str(index).zfill(len(str(len(hr_interpolated))))
-            image_path = f"{self.train_monitor_path}{name}_generated.{self.format}"
-            hr_gen.save(image_path)
-
     def initialize_dirs(self, testing_batch_size, total_epochs, originals=True):
-        for monitor_path, images_path in zip(
-            self.train_monitor_paths, self.test_images_names
-        ):
+        self.epochs = total_epochs
+        for (ds_name, ds_items) in self.test_datasets.items():
+            monitor_path = f"{self.base_monitor_path}/{ds_name}/{self.net_name}"
             try:
                 os.makedirs(monitor_path)
             except FileExistsError:
                 shutil.rmtree(monitor_path, ignore_errors=True)
                 os.makedirs(monitor_path)
 
-            self.epochs = total_epochs
-            imgs = self.load_image_batch(testing_batch_size, images_path, is_test=True)
-            output_path = f"{monitor_path}test_"
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
+
+            imgs = self.load_image_batch(
+                testing_batch_size, test_images_paths, is_test=True
+            )
+
+            output_path = f"{monitor_path}/test_"
 
             for idx, img in enumerate(imgs):
                 sample_path = output_path + f"{idx}/"
@@ -283,40 +258,108 @@ class ImagesManager:
                     lr_img = self.unprocess_image(lr_img)
                     lr_img.save(lr_path)
 
-    def get_dataset(self):
-        opts = {
-            "lr_shape": self.lr_shape,
-            "hr_shape": self.hr_shape,
-            "batch_size": self.batch_size,
-        }
-        train_images = []
-        for images_sets in self.train_images_names:
-            train_images.extend(images_sets)
+    def test_images_interpolation(self, method):
+        for (ds_name, ds_items) in self.test_datasets.items():
+            results_path = f"{self.base_results_path}/{ds_name}/{self.net_name}"
+            os.makedirs(results_path, exist_ok=True)
 
-        return InterpolatedImageLoader(train_images, opts)
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
 
-    def test_images_interpolation(self):
+            for index, path in enumerate(sorted(test_images_paths)):
+                image = self.load_image(path)
+                lr_img = self.resampling(image, self.lr_shape)
 
-        for path in self.test_results_paths:
-            os.makedirs(path, exist_ok=True)
+                hr_fake = method(lr_img)
 
-        def tester(method):
+                index = str(index)
+                index = index.zfill(len(str(len(test_images_paths))))
+                image_path = f"{results_path}/{index}.{self.format}"
+                hr_fake.save(image_path)
 
-            for results_path, images_path in zip(
-                self.test_results_paths, self.test_images_names
-            ):
-                for index, path in enumerate(images_path):
-                    image = self.load_image(path)
-                    lr_img = self.resampling(image, self.lr_shape)
+    def test_net(self, method):
+        for (ds_name, ds_items) in self.test_datasets.items():
+            results_path = f"{self.base_results_path}/{ds_name}/{self.net_name}"
+            os.makedirs(results_path, exist_ok=True)
 
-                    hr_fake = method(lr_img)
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
 
-                    index = str(index)
-                    index = index.zfill(len(str(len(images_path))))
-                    image_path = f"{results_path}{index}.{self.format}"
-                    hr_fake.save(image_path)
+            for index, path in enumerate(sorted(test_images_paths)):
+                image = self.load_image(path)
+                lr_img = self.resampling(image, self.lr_shape)
+                lr_img = self.process_image(lr_img)
+                lr_img = normalize(lr_img)
+                lr_img = tf.cast([lr_img], dtype=tf.float32)
 
-        return tester
+                sr_img = method(lr_img)
+
+                # sr_img = sr_img.numpy().squeeze()
+                sr_img = denormalize(sr_img)
+                sr_img = self.unprocess_image(sr_img)
+
+                index = str(index)
+                index = index.zfill(len(str(len(test_images_paths))))
+                image_path = f"{results_path}/{index}.{self.format}"
+                sr_img.save(image_path)
+
+    def test_net_with_interpolation(self, method):
+        for (ds_name, ds_items) in self.test_datasets.items():
+            results_path = f"{self.base_results_path}/{ds_name}/{self.net_name}"
+            os.makedirs(results_path, exist_ok=True)
+
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
+
+            for index, path in enumerate(sorted(test_images_paths)):
+                image = self.load_image(path)
+                lr_img = self.resampling(image, self.lr_shape)
+                hr_img = self.resampling(lr_img, self.hr_shape)
+                hr_img = self.process_image(hr_img)
+                hr_img = normalize(hr_img)
+                hr_img = tf.cast([hr_img], dtype=tf.float32)
+
+                sr_img = method(hr_img)
+
+                sr_img = denormalize(sr_img)
+                sr_img = self.unprocess_image(sr_img)
+
+                index = str(index)
+                index = index.zfill(len(str(len(test_images_paths))))
+                image_path = f"{results_path}/{index}.{self.format}"
+                sr_img.save(image_path)
+
+    def test_psnr_and_ssim(self):
+        metrics = {}
+        for (ds_name, ds_items) in self.test_datasets.items():
+            metrics[ds_name] = {"psnr": [], "ssim": []}
+            results_path = f"{self.base_results_path}/{ds_name}/{self.net_name}"
+
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            sr_images_paths = sorted(glob.glob(f"{results_path}/*.*"))
+            test_images_paths = sorted(glob.glob(f"{ds_path}/*.*"))
+            test_images_paths = test_images_paths[: len(sr_images_paths)]
+
+            if len(sr_images_paths) < 1:
+                raise Exception("No results yet.")
+
+            for gt_path, sr_path in zip(test_images_paths, sr_images_paths):
+                gt_image = self.load_image(gt_path)
+                sr_image = self.load_image(sr_path)
+
+                gt_image = self.process_image(gt_image)
+                sr_image = self.process_image(sr_image)
+
+                gt_image = tf.cast(gt_image, dtype=tf.float32)
+                sr_image = tf.cast(sr_image, dtype=tf.float32)
+
+                metrics[ds_name]["psnr"].append(psnr(gt_image, sr_image).numpy())
+                metrics[ds_name]["ssim"].append(ssim(gt_image, sr_image).numpy())
+
+        os.makedirs("./results/metrics/", exist_ok=True)
+        metrics_df = pd.DataFrame.from_dict(metrics)
+        metrics_df.to_csv(f"./results/metrics/{self.net_name}.csv", index=False)
+        print(f"\n>> saved metrics results at ./results/metrics/{self.net_name}.csv")
 
 
 def load_images_datasets(
@@ -446,78 +489,78 @@ def define_image_process_interpolated(gt_size, scale):
     return process
 
 
-class InterpolatedImageLoader(tf.keras.utils.Sequence):
-    def __init__(self, images, opts):
-        self.batch_size = opts.get("batch_size")
-        self.hr_shape = opts.get("hr_shape")
-        self.lr_shape = opts.get("lr_shape")
-        self.images = images
+# class InterpolatedImageLoader(tf.keras.utils.Sequence):
+#     def __init__(self, images, opts):
+#         self.batch_size = opts.get("batch_size")
+#         self.hr_shape = opts.get("hr_shape")
+#         self.lr_shape = opts.get("lr_shape")
+#         self.images = images
 
-    def __len__(self):
-        return math.ceil(len(self.images) / (len(self.images) / self.batch_size))
+#     def __len__(self):
+#         return math.ceil(len(self.images) / (len(self.images) / self.batch_size))
 
-    def load_image(self, image_path):
-        image = Image.open(image_path)
-        image = image.convert("RGB")
-        return image
+#     def load_image(self, image_path):
+#         image = Image.open(image_path)
+#         image = image.convert("RGB")
+#         return image
 
-    def augment_base(self, image):
+#     def augment_base(self, image):
 
-        if np.random.uniform() < 0.5:
-            image = ImageOps.mirror(image)
+#         if np.random.uniform() < 0.5:
+#             image = ImageOps.mirror(image)
 
-        if np.random.uniform() < 0.5:
-            image = ImageOps.flip(image)
+#         if np.random.uniform() < 0.5:
+#             image = ImageOps.flip(image)
 
-        return image
+#         return image
 
-    def process_base(self, image_path):
-        img = self.load_image(image_path)
-        img = self.augment_base(img)
-        return img
+#     def process_base(self, image_path):
+#         img = self.load_image(image_path)
+#         img = self.augment_base(img)
+#         return img
 
-    def resampling(self, image, shape):
-        return image.resize(shape, resample=Image.BICUBIC)
+#     def resampling(self, image, shape):
+#         return image.resize(shape, resample=Image.BICUBIC)
 
-    def convert_to_array(self, image):
-        image = np.array(image).astype(np.float32)
-        check_pixels(image)
-        return image
+#     def convert_to_array(self, image):
+#         image = np.array(image).astype(np.float32)
+#         check_pixels(image)
+#         return image
 
-    def process_x(self, image):
-        image = self.resampling(image, self.lr_shape)
-        image = self.resampling(image, self.hr_shape)
-        image = self.convert_to_array(image)
-        image = normalize(image)
+#     def process_x(self, image):
+#         image = self.resampling(image, self.lr_shape)
+#         image = self.resampling(image, self.hr_shape)
+#         image = self.convert_to_array(image)
+#         image = normalize(image)
 
-        return image
+#         return image
 
-    def process_y(self, image):
-        image = self.resampling(image, self.hr_shape)
-        image = self.convert_to_array(image)
-        image = normalize(image)
+#     def process_y(self, image):
+#         image = self.resampling(image, self.hr_shape)
+#         image = self.convert_to_array(image)
+#         image = normalize(image)
 
-        return image
+#         return image
 
-    def __getitem__(self, idx):
-        batch_x = self._get_x_batch(idx)
-        batch_y = self._get_y_batch(idx)
+#     def __getitem__(self, idx):
+#         batch_x = self._get_x_batch(idx)
+#         batch_y = self._get_y_batch(idx)
 
-        return np.array(batch_x), np.array(batch_y)
+#         return np.array(batch_x), np.array(batch_y)
 
-    def _get_image_batch(self, idx):
-        imgs = self.images[idx * self.batch_size : (idx + 1) * self.batch_size]
-        imgs = [self.process_base(img) for img in imgs]
-        return imgs
+#     def _get_image_batch(self, idx):
+#         imgs = self.images[idx * self.batch_size : (idx + 1) * self.batch_size]
+#         imgs = [self.process_base(img) for img in imgs]
+#         return imgs
 
-    def _get_x_batch(self, idx):
-        x = self._get_image_batch(idx)
-        x = [self.process_x(img) for img in x]
-        x = tf.cast(x, dtype=tf.float32)
-        return x
+#     def _get_x_batch(self, idx):
+#         x = self._get_image_batch(idx)
+#         x = [self.process_x(img) for img in x]
+#         x = tf.cast(x, dtype=tf.float32)
+#         return x
 
-    def _get_y_batch(self, idx):
-        y = self._get_image_batch(idx)
-        y = [self.process_y(img) for img in y]
-        y = tf.cast(y, dtype=tf.float32)
-        return y
+#     def _get_y_batch(self, idx):
+#         y = self._get_image_batch(idx)
+#         y = [self.process_y(img) for img in y]
+#         y = tf.cast(y, dtype=tf.float32)
+#         return y

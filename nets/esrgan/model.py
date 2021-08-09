@@ -1,19 +1,17 @@
 import ipdb
 import tensorflow as tf
 import numpy as np
-import copy
-import pandas as pd
 
 from registry import MODEL_REGISTRY
-from utils import ProgressBar, load_yaml
+from utils import ProgressBar, load_yaml, load_history, save_history
+from data_manager import load_datasets, define_image_process, ImagesManager
 
 from metrics import psnr, ssim
-from nets.esrgan.rrdbnet import RRDB_Model
-from nets.esrgan.psnr_model import psnr_pretrain
-from nets.esrgan.discriminator import DiscriminatorVGG128
 from lr_schedule import MultiStepLR
 from losses import GeneratorLoss, DiscriminatorLoss, PixelLoss, ContentLoss
-from data_manager import load_datasets, define_image_process, ImagesManager
+from .rrdbnet import RRDB_Model
+from .psnr_model import esrgan_pretrain
+from .discriminator import DiscriminatorVGG128
 
 
 @MODEL_REGISTRY.register()
@@ -21,15 +19,6 @@ def esrgan(config):
 
     image_manager = ImagesManager(config)
     image_manager.initialize_dirs(2, config["epochs"])
-
-    try:
-        history_df = pd.read_csv(f"./histories/{config['name']}.csv")
-        history = {
-            col_name: history_df[col_name].tolist() for col_name in history_df.columns
-        }
-    except (FileNotFoundError, pd.errors.EmptyDataError):
-        history = {"loss_G": [], "loss_D": [], "psnr": [], "ssim": []}
-    _history = copy.deepcopy(history)
 
     imgs_config = config["images"]
     train_config = config["train"]
@@ -39,7 +28,7 @@ def esrgan(config):
     pretrain_config = load_yaml("./configs/pretrain.yaml")
 
     # define network
-    generator = psnr_pretrain(pretrain_config)
+    generator = esrgan_pretrain(pretrain_config)
     # generator = RRDB_Model(
     #     imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"]
     # )
@@ -92,6 +81,7 @@ def esrgan(config):
         checkpoint=checkpoint, directory=checkpoint_dir, max_to_keep=3
     )
 
+    history = load_history(config, manager.latest_checkpoint)
     if manager.latest_checkpoint:
         ckpt_status = checkpoint.restore(manager.latest_checkpoint)
         # ckpt_status.assert_consumed()
@@ -183,10 +173,10 @@ def esrgan(config):
         if img_psnr.shape[0] == 1:
             img_psnr = img_psnr.squeeze()
             img_ssim = img_ssim.squeeze()
-        _history["psnr"].append(img_psnr)
-        _history["ssim"].append(img_ssim)
-        _history["loss_G"].append(total_loss_G.numpy())
-        _history["loss_D"].append(total_loss_D.numpy())
+        history["psnr"].append(img_psnr)
+        history["ssim"].append(img_ssim)
+        history["loss_G"].append(total_loss_G.numpy())
+        history["loss_D"].append(total_loss_D.numpy())
 
         if steps % 10 == 0:
             with summary_writer.as_default():
@@ -202,12 +192,12 @@ def esrgan(config):
 
         if steps % config["save_steps"] == 0:
             manager.save()
-            history = copy.deepcopy(_history)
+            save_history(history, config)
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
             image_manager.generate_and_save_images(generator, steps, 2)
 
-    print(f"\n>> {config['net']} training done!")
+    print(f"\n>> {config['name']} training done!")
 
     return history

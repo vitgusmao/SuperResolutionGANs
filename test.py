@@ -8,6 +8,7 @@ from PIL import Image
 
 from data_manager import ImagesManager
 from utils import load_yaml
+from nets import test_srgan
 
 
 def run_interpolations(config):
@@ -34,27 +35,26 @@ def run_interpolations(config):
 
     for name, method in methods.items():
         config["name"] = name
+        print(f">> generating images with {name}.")
         image_manager = ImagesManager(config)
-        tester = image_manager.test_images_interpolation()
 
         interpolation = get_interpolation(method, shape)
-        tester(interpolation)
+        image_manager.test_images_interpolation(interpolation)
+
+    print(f">> test done for interpolations.")
 
 
-# dataset_name = "DIV2K_train_HR"
-# dataset_dir = "../datasets/{}/"
-# image_manager = ImagesManager(
-#     dataset_dir, dataset_name, "None", hr_img_shape, lr_img_shape
-# )
+# config = load_yaml("./configs/interpolations.yaml")
+
+# run_interpolations(config)
 
 
-# images = image_manager.rebuild_images(images, generated=False)
-# for i, img in enumerate(images):
-#     img.save(f"{i}_i.png")
+config = load_yaml("./configs/srgan.yaml")
 
-# other = image_manager.rebuild_images(other, generated=False)
-# for i, img in enumerate(other):
-#     img.save(f"{i}_o.png")
-config = load_yaml("./configs/interpolations.yaml")
+img_mngr = ImagesManager(config)
+net = test_srgan(config)
+img_mngr.test_net(net)
 
-run_interpolations(config)
+print(f">> test done for {config['name']}")
+
+# img_mngr.test_psnr_and_ssim()

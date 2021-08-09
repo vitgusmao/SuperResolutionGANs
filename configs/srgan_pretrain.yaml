@@ -1,5 +1,6 @@
-name: "gan_pretrain"
-epochs: 100000
+name: "srgan_pretrain"
+type: "cnn"
+epochs: 200000
 batch_size: 1
 save_steps: 10000
 gen_steps: 1000
@@ -27,6 +28,6 @@ datasets:
 
   test_datasets:
     Celeba_HQ:
-      path: "../datasets/Celeba_HQ_valid/"
+      path: "../datasets/Celeba_HQ_val/"
 
   test_size: 10

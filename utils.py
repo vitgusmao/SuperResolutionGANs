@@ -1,9 +1,13 @@
-from shutil import get_terminal_size
+import logging
 import numpy as np
+import os
+import pandas as pd
+import pandas as pd
 import sys
 import time
 import yaml
-import logging
+
+from shutil import get_terminal_size
 
 
 def load_yaml(load_path):
@@ -15,7 +19,7 @@ def load_yaml(load_path):
 
 def cant_finish_with_bar(path):
     if path[-1] == "/":
-        path.pop(-1)
+        path = path[:-1]
     return path
 
 
@@ -125,3 +129,33 @@ class ProgressBar(object):
         )
 
         sys.stdout.flush()
+
+
+def save_history(history, config):
+    os.makedirs("./histories/", exist_ok=True)
+    history_df = pd.DataFrame.from_dict(history)
+    history_df.to_csv(f"./histories/{config['name']}.csv", index=False)
+    print(f"\n>> saved hisotry file at ./histories/{config['name']}.csv")
+
+
+def load_history(config, has_checkpoint):
+    if config["type"] == "cnn":
+        base_history = {"loss": [], "psnr": [], "ssim": []}
+    elif config["type"] == "gan":
+        base_history = {"loss_G": [], "loss_D": [], "psnr": [], "ssim": []}
+    else:
+        raise NotImplementedError("Net type not Implemented.")
+
+    if has_checkpoint:
+        try:
+            history_df = pd.read_csv(f"./histories/{config['name']}.csv")
+            history = {
+                col_name: history_df[col_name].tolist()
+                for col_name in history_df.columns
+            }
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            history = base_history
+    else:
+        history = base_history
+
+    return history

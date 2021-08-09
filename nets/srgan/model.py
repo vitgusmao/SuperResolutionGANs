@@ -4,7 +4,7 @@ import copy
 import pandas as pd
 
 from registry import MODEL_REGISTRY
-from utils import ProgressBar, load_yaml
+from utils import ProgressBar, load_history, save_history
 from data_manager import ImagesManager, load_datasets, define_image_process
 
 from metrics import psnr, ssim
@@ -21,15 +21,6 @@ def srgan(config):
 
     image_manager = ImagesManager(config)
     image_manager.initialize_dirs(2, config["epochs"])
-
-    try:
-        history_df = pd.read_csv(f"./histories/{config['name']}.csv")
-        history = {
-            col_name: history_df[col_name].tolist() for col_name in history_df.columns
-        }
-    except (FileNotFoundError, pd.errors.EmptyDataError):
-        history = {"loss_G": [], "loss_D": [], "psnr": [], "ssim": []}
-    _history = copy.deepcopy(history)
 
     imgs_config = config["images"]
     train_config = config["train"]
@@ -89,6 +80,7 @@ def srgan(config):
         checkpoint=checkpoint, directory=checkpoint_dir, max_to_keep=3
     )
 
+    history = load_history(config, manager.latest_checkpoint)
     if manager.latest_checkpoint:
         ckpt_status = checkpoint.restore(manager.latest_checkpoint)
         # ckpt_status.assert_consumed()
@@ -178,10 +170,10 @@ def srgan(config):
         if img_psnr.shape[0] == 1:
             img_psnr = img_psnr.squeeze()
             img_ssim = img_ssim.squeeze()
-        _history["psnr"].append(img_psnr)
-        _history["ssim"].append(img_ssim)
-        _history["loss_G"].append(total_loss_G.numpy())
-        _history["loss_D"].append(total_loss_D.numpy())
+        history["psnr"].append(img_psnr)
+        history["ssim"].append(img_ssim)
+        history["loss_G"].append(total_loss_G.numpy())
+        history["loss_D"].append(total_loss_D.numpy())
 
         if steps % 10 == 0:
             with summary_writer.as_default():
@@ -197,12 +189,68 @@ def srgan(config):
 
         if steps % config["save_steps"] == 0:
             manager.save()
-            history = copy.deepcopy(_history)
+            save_history(history, config)
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
             image_manager.generate_and_save_images(generator, steps, 2)
 
-    print(f"\n>> {config['net']} training done!")
+    print(f"\n>> {config['name']} training done!")
 
     return history
+
+
+def test_srgan(config):
+    imgs_config = config["images"]
+    train_config = config["train"]
+    g_config = train_config["generator"]
+    d_config = train_config["discriminator"]
+
+    generator = RB_Model(
+        imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"]
+    )
+    discriminator = Discriminator(imgs_config["gt_size"], imgs_config["channels"])
+
+    # define optimizer
+    learning_rate_G = MultiStepLR(
+        g_config["lr"], train_config["lr_steps"], train_config["lr_rate"]
+    )
+    learning_rate_D = MultiStepLR(
+        d_config["lr"], train_config["lr_steps"], train_config["lr_rate"]
+    )
+    optimizer_G = tf.keras.optimizers.Adam(
+        learning_rate=learning_rate_G,
+        beta_1=g_config["adam_beta1"],
+        beta_2=g_config["adam_beta2"],
+    )
+    optimizer_D = tf.keras.optimizers.Adam(
+        learning_rate=learning_rate_D,
+        beta_1=d_config["adam_beta1"],
+        beta_2=d_config["adam_beta2"],
+    )
+
+    checkpoint_dir = "./checkpoints/" + config["name"]
+    checkpoint = tf.train.Checkpoint(
+        step=tf.Variable(0, name="step"),
+        optimizer_G=optimizer_G,
+        optimizer_D=optimizer_D,
+        model=generator,
+        discriminator=discriminator,
+    )
+    manager = tf.train.CheckpointManager(
+        checkpoint=checkpoint, directory=checkpoint_dir, max_to_keep=3
+    )
+
+    if manager.latest_checkpoint:
+        checkpoint.restore(manager.latest_checkpoint)
+
+        print(
+            ">> load ckpt from {} at step {}.".format(
+                manager.latest_checkpoint, checkpoint.step.numpy()
+            )
+        )
+    else:
+        print(">> cannot find model ckpt at {}, aborting test.".format(checkpoint_dir))
+        raise FileNotFoundError()
+
+    return checkpoint.model

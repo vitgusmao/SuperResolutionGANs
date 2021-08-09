@@ -2,11 +2,10 @@ from keras.layers.convolutional import Conv2D
 from keras.models import Model
 from keras.layers import (
     LeakyReLU,
-    SyncBatchNormalization,
-    BatchNormalization,
+    # SyncBatchNormalization,
+    # BatchNormalization,
     Dense,
     Flatten,
-    Activation,
     Input,
 )
 import functools
@@ -23,6 +22,39 @@ def _kernel_init(scale=1.0, seed=None):
     return tf.keras.initializers.VarianceScaling(
         scale=scale, mode="fan_in", distribution="truncated_normal", seed=seed
     )
+
+
+class BatchNormalization(tf.keras.layers.BatchNormalization):
+    """Make trainable=False freeze BN for real (the og version is sad).
+    ref: https://github.com/zzh8829/yolov3-tf2
+    """
+
+    def __init__(
+        self,
+        axis=-1,
+        momentum=0.9,
+        epsilon=1e-5,
+        center=True,
+        scale=True,
+        name=None,
+        **kwargs
+    ):
+        super(BatchNormalization, self).__init__(
+            axis=axis,
+            momentum=momentum,
+            epsilon=epsilon,
+            center=center,
+            scale=scale,
+            name=name,
+            **kwargs
+        )
+
+    def call(self, x, training=False):
+        if training is None:
+            training = tf.constant(False)
+        training = tf.logical_and(training, self.trainable)
+        return super().call(x, training)
+
 
 # Based on https://github.com/peteryuX/esrgan-tf2 implementation of https://github.com/xinntao/BasicSR implementation
 def DiscriminatorVGG128(size, channels, nf=64, wd=0.0, name="Discriminator_VGG_128"):

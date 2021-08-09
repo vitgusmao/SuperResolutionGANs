@@ -6,8 +6,9 @@ from keras.models import Model
 import numpy as np
 import pandas as pd
 import copy
+import os
 
-from utils import ProgressBar
+from utils import ProgressBar, load_history, save_history
 from data_manager import ImagesManager, load_datasets, define_image_process_interpolated
 from registry import MODEL_REGISTRY
 
@@ -38,16 +39,6 @@ def srcnn(config):
 
     image_manager = ImagesManager(config)
     image_manager.initialize_dirs(2, config["epochs"])
-
-    try:
-        history_df = pd.read_csv(f"./histories/{config['name']}.csv")
-        history = {
-            col_name: history_df[col_name].tolist() for col_name in history_df.columns
-        }
-    except (FileNotFoundError, pd.errors.EmptyDataError):
-        history = {"loss": [], "psnr": [], "ssim": []}
-    _history = copy.deepcopy(history)
-
 
     imgs_config = config["images"]
     train_config = config["train"]
@@ -90,6 +81,7 @@ def srcnn(config):
         checkpoint=checkpoint, directory=checkpoint_dir, max_to_keep=3
     )
 
+    history = load_history(config, manager.latest_checkpoint)
     if manager.latest_checkpoint:
         ckpt_status = checkpoint.restore(manager.latest_checkpoint)
         ckpt_status.expect_partial()
@@ -138,18 +130,16 @@ def srcnn(config):
         if img_psnr.shape[0] == 1:
             img_psnr = img_psnr.squeeze()
             img_ssim = img_ssim.squeeze()
-        _history["psnr"].append(img_psnr)
-        _history["ssim"].append(img_ssim)
-        _history["loss"].append(total_loss.numpy())
+        history["psnr"].append(img_psnr)
+        history["ssim"].append(img_ssim)
+        history["loss"].append(total_loss.numpy())
 
         if steps % config["save_steps"] == 0:
             manager.save()
-            history = copy.deepcopy(_history)
+            save_history(history, config)
             print(f"\n>> saved chekpoint file at {manager.latest_checkpoint}.")
 
         if steps % config["gen_steps"] == 0:
             image_manager.generate_and_save_images_cnn(model, steps, 2)
 
-    print(f"\n>> training done for {config['net']}!")
-
-    return history
+    print(f"\n>> training done for {config['name']}!")

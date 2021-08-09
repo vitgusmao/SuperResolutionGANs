@@ -1,8 +1,6 @@
-import sys
-import os
-import tensorflow as tf
 import argparse
-import pandas
+import sys
+import tensorflow as tf
 
 gpu_devices = tf.config.experimental.list_physical_devices("GPU")
 for device in gpu_devices:
@@ -15,14 +13,11 @@ sys.path.append("./")
 from registry import MODEL_REGISTRY
 from utils import load_yaml
 from data_manager import ImagesManager
-from nets.srgan import model
-from nets.esrgan import model
-from nets.esrgan import psnr_model
 from nets.srcnn import model
-from nets.vdsr import model
 from nets.edsr import model
-
-from plot.all_informations import plot_togheter
+from nets.srgan import model
+from nets.esrgan import psnr_model
+from nets.esrgan import model
 
 
 parser = argparse.ArgumentParser(description="Options for super resolution")
@@ -35,8 +30,4 @@ args = parser.parse_args()
 with tf.device("/GPU:0"):
     config = load_yaml(args.config)
     train = MODEL_REGISTRY.get(config["name"])
-    history = train(config)
-
-    os.makedirs("./histories/", exist_ok=True)
-    history_df = pandas.DataFrame.from_dict(history)
-    history_df.to_csv(f"./histories/{config['name']}.csv", index=False)
+    train(config)

@@ -23,38 +23,6 @@ def _kernel_init(scale=1.0, seed=None):
     )
 
 
-class BatchNormalization(tf.keras.layers.BatchNormalization):
-    """Make trainable=False freeze BN for real (the og version is sad).
-    ref: https://github.com/zzh8829/yolov3-tf2
-    """
-
-    def __init__(
-        self,
-        axis=-1,
-        momentum=0.9,
-        epsilon=1e-5,
-        center=True,
-        scale=True,
-        name=None,
-        **kwargs
-    ):
-        super(BatchNormalization, self).__init__(
-            axis=axis,
-            momentum=momentum,
-            epsilon=epsilon,
-            center=center,
-            scale=scale,
-            name=name,
-            **kwargs
-        )
-
-    def call(self, x, training=False):
-        if training is None:
-            training = tf.constant(False)
-        training = tf.logical_and(training, self.trainable)
-        return super().call(x, training)
-
-
 class ResDenseBlock_5C(tf.keras.layers.Layer):
     """Residual Dense Block"""
 
@@ -85,6 +53,20 @@ class ResDenseBlock_5C(tf.keras.layers.Layer):
         x5 = self.conv5(tf.concat([x, x1, x2, x3, x4], 3))
         return x5 * self.res_beta + x
 
+    def get_config(self):
+        config = super(ResDenseBlock_5C, self).get_config()
+        config.update(
+            {
+                "res_beta": self.res_beta,
+                "conv1": self.conv1,
+                "conv2": self.conv2,
+                "conv3": self.conv3,
+                "conv4": self.conv4,
+                "conv5": self.conv5,
+            }
+        )
+        return config
+
 
 class ResInResDenseBlock(tf.keras.layers.Layer):
     """Residual in Residual Dense Block"""
@@ -101,6 +83,19 @@ class ResInResDenseBlock(tf.keras.layers.Layer):
         out = self.rdb_2(out)
         out = self.rdb_3(out)
         return out * self.res_beta + x
+
+    def get_config(self):
+        config = super(ResDenseBlock_5C, self).get_config()
+        config.update(
+            {
+                "res_beta": self.res_beta,
+                "rdb_1": self.rdb_1,
+                "rdb_2": self.rdb_2,
+                "rdb_3": self.rdb_3,
+            }
+        )
+        return config
+
 
 # Based on https://github.com/peteryuX/esrgan-tf2 implementation of https://github.com/xinntao/BasicSR implementation
 def RRDB_Model(
@@ -145,6 +140,15 @@ def RRDB_Model(
     out = conv_f(filters=channels, name="conv_last")(fea)
 
     model = Model(inputs, out, name=name)
+
+    # # Retrieve the config
+    # config = model.get_config()
+
+    # # At loading time, register the custom objects with a `custom_object_scope`:
+    # custom_objects = {"ResInResDenseBlock": ResInResDenseBlock}
+    # with tf.keras.utils.custom_object_scope(custom_objects):
+    #     model = tf.keras.Model.from_config(config)
+
     model.summary(line_length=80)
 
     return model

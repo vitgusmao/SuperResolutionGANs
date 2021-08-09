@@ -1,5 +1,5 @@
 from .srcnn import *
-from .vdsr import *
+from .edsr import *
 from .srgan import *
 from .esrgan import * 
 
