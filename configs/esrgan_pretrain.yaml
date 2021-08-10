@@ -1,6 +1,6 @@
-name: "srgan_pretrain"
+name: "esrgan_pretrain"
 type: "cnn"
-epochs: 200000
+epochs: 100000
 batch_size: 1
 save_steps: 10000
 gen_steps: 1000
@@ -13,13 +13,13 @@ images:
 train:
   adam_beta1: 0.9
   adam_beta2: 0.99
-  lr: !!float 1e-4
-  lr_steps: [1]
-  lr_rate: 1
+  lr: !!float 2e-4
+  lr_steps: [200000, 400000, 600000, 800000]
+  lr_rate: 0.5
   pixel_criterion: "l1"
   pixel_weight: 1.0
   num_filters: 64
-  num_blocks: 16
+  num_blocks: 23
 
 datasets:
   train_datasets:

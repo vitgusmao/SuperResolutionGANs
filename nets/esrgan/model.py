@@ -25,13 +25,10 @@ def esrgan(config):
     g_config = train_config["generator"]
     d_config = train_config["discriminator"]
 
-    pretrain_config = load_yaml("./configs/pretrain.yaml")
-
     # define network
-    generator = esrgan_pretrain(pretrain_config)
-    # generator = RRDB_Model(
-    #     imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"]
-    # )
+    generator = RRDB_Model(
+        imgs_config["gt_size"], imgs_config["scale"], imgs_config["channels"]
+    )
 
     discriminator = DiscriminatorVGG128(imgs_config["gt_size"], imgs_config["channels"])
 

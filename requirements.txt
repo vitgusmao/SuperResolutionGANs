@@ -12,3 +12,4 @@ tensorflow_datasets
 plotly
 Pillow
 nibabel
+kaleido

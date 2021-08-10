@@ -5,10 +5,18 @@ import numpy as np
 import ipdb
 import nibabel as nib
 from PIL import Image
+import argparse
 
 from data_manager import ImagesManager
 from utils import load_yaml
 from nets import test_srgan
+
+parser = argparse.ArgumentParser(description="Options for super resolution")
+parser.add_argument(
+    "--config", help="name of yaml config file under configs/", default=None
+)
+
+args = parser.parse_args()
 
 
 def run_interpolations(config):
@@ -20,7 +28,6 @@ def run_interpolations(config):
         "nearest": Image.NEAREST,
         "bilinear": Image.BILINEAR,
         "bicubic": Image.BICUBIC,
-        "box": Image.BOX,
         "hamming": Image.HAMMING,
         "lanczos": Image.LANCZOS,
     }
@@ -48,13 +55,15 @@ def run_interpolations(config):
 
 # run_interpolations(config)
 
+if args.config:
+    config = load_yaml(f"./configs/{args.config}.yaml")
+    print(f">> {config['name']} config file loaded")
+    img_mngr = ImagesManager(config)
+    net = test_srgan(config)
+    img_mngr.test_net(net)
+    print(f">> {config['name']} results printed.")
+else:
+    raise Exception(">> missing config file.")
 
-config = load_yaml("./configs/srgan.yaml")
-
-img_mngr = ImagesManager(config)
-net = test_srgan(config)
-img_mngr.test_net(net)
-
-print(f">> test done for {config['name']}")
 
 # img_mngr.test_psnr_and_ssim()

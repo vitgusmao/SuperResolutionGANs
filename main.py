@@ -28,6 +28,6 @@ parser.add_argument(
 args = parser.parse_args()
 
 with tf.device("/GPU:0"):
-    config = load_yaml(args.config)
+    config = load_yaml(f"./configs/{args.config}.yaml")
     train = MODEL_REGISTRY.get(config["name"])
     train(config)

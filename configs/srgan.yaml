@@ -1,9 +1,9 @@
 name: "srgan"
 type: "gan"
-epochs: 20000
+epochs: 60000
 batch_size: 1
 save_steps: 5000
-gen_steps: 200
+gen_steps: 600
 
 images:
   gt_size: 256

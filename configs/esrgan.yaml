@@ -27,7 +27,7 @@ train:
     adam_beta1: 0.9
     adam_beta2: 0.99
     num_filters: 64
-    num_blocks: 16
+    num_blocks: 23
 
   discriminator:
     lr: !!float 4e-4
@@ -41,4 +41,4 @@ train:
   pixel_weight: !!float 1e-2
   feature_weight: 1.0
   gen_weight: !!float 5e-3
-  pretrain: psnr_pretrain
+  pretrain: esrgan_pretrain

@@ -1,6 +1,6 @@
 name: "srcnn"
 type: "cnn"
-epochs: 200000
+epochs: 350000
 batch_size: 1
 save_steps: 10000
 gen_steps: 1000
@@ -12,8 +12,8 @@ images:
 
 train:
   lr: !!float 1e-4
-  lr_steps: [200000]
-  lr_rate: 0.5
+  lr_steps: [90000000]
+  lr_rate: 1
   adam_beta1: 0.9
   adam_beta2: 0.99
   num_filters: 64

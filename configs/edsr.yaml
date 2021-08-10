@@ -1,8 +1,8 @@
 name: "edsr"
 type: "cnn"
-epochs: 10000
+epochs: 300000
 batch_size: 1
-save_steps: 1000
+save_steps: 5000
 gen_steps: 1000
 
 images:
@@ -17,7 +17,8 @@ train:
   num_filters: 64
   criterion: "l1"
   loss_weight: 1.0
-  num_blocks: 8
+  num_blocks: 32
+  epsilon: !!float 1e-8
   adam_beta1: 0.9
   adam_beta2: 0.99
 

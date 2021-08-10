@@ -133,7 +133,10 @@ dmypy.json
 
 checkpoints/*
 checkpoints_faces/*
+checkpoints_natural/*
 histories/*
+histories_faces/*
+histories_natural/*
 monitor/*
 results/*
 logs/*

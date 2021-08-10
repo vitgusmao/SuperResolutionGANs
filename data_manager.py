@@ -6,7 +6,7 @@ import os
 import shutil
 import tensorflow as tf
 import pandas as pd
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageOps, ImageFile
 
 from utils import (
     must_finish_with_bar,
@@ -17,6 +17,8 @@ from utils import (
 )
 
 from metrics import psnr, ssim
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class ImagesManager:
@@ -287,7 +289,7 @@ class ImagesManager:
 
             for index, path in enumerate(sorted(test_images_paths)):
                 image = self.load_image(path)
-                lr_img = self.resampling(image, self.lr_shape)
+                lr_img = self.resampling(image, self.hr_shape)
                 lr_img = self.process_image(lr_img)
                 lr_img = normalize(lr_img)
                 lr_img = tf.cast([lr_img], dtype=tf.float32)
@@ -302,6 +304,42 @@ class ImagesManager:
                 index = index.zfill(len(str(len(test_images_paths))))
                 image_path = f"{results_path}/{index}.{self.format}"
                 sr_img.save(image_path)
+
+    def get_low_res(self):
+        self.net_name = "low"
+        for (ds_name, ds_items) in self.test_datasets.items():
+            results_path = f"{self.base_results_path}/{ds_name}/{self.net_name}"
+            os.makedirs(results_path, exist_ok=True)
+
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
+
+            for index, path in enumerate(sorted(test_images_paths)):
+                image = self.load_image(path)
+                lr_img = self.resampling(image, self.lr_shape)
+
+                index = str(index)
+                index = index.zfill(len(str(len(test_images_paths))))
+                image_path = f"{results_path}/{index}.{self.format}"
+                lr_img.save(image_path)
+
+    def get_ground_truth(self):
+        self.net_name = "original"
+        for (ds_name, ds_items) in self.test_datasets.items():
+            results_path = f"{self.base_results_path}/{ds_name}/{self.net_name}"
+            os.makedirs(results_path, exist_ok=True)
+
+            ds_path = cant_finish_with_bar(ds_items["path"])
+            test_images_paths = glob.glob(f"{ds_path}/*.*")
+
+            for index, path in enumerate(sorted(test_images_paths)):
+                image = self.load_image(path)
+                gt_img = self.resampling(image, self.hr_shape)
+
+                index = str(index)
+                index = index.zfill(len(str(len(test_images_paths))))
+                image_path = f"{results_path}/{index}.{self.format}"
+                gt_img.save(image_path)
 
     def test_net_with_interpolation(self, method):
         for (ds_name, ds_items) in self.test_datasets.items():

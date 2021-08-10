@@ -101,6 +101,7 @@ def edsr(config):
         learning_rate=learning_rate,
         beta_1=tf.Variable(train_config["adam_beta1"]),
         beta_2=tf.Variable(train_config["adam_beta2"]),
+        epsilon=train_config["epsilon"]
     )
 
     # load checkpoint
