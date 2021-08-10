@@ -61,11 +61,7 @@ class ImagesManager:
         return images_batch
 
     def resampling(self, image, shape):
-        org_shape = image.size
-        if org_shape[0] > shape[0] or org_shape[1] > shape[1]:
-            resample_with = Image.LANCZOS
-        else:
-            resample_with = Image.BICUBIC
+        resample_with = Image.BICUBIC
 
         return image.resize(shape, resample=resample_with)
 
